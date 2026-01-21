@@ -1,0 +1,71 @@
+[
+  { "id": "brezovica", "name": "LD Brezovica", "region": "notranjska" },
+  { "id": "trnovo", "name": "LD Trnovo", "region": "notranjska" },
+
+  { "id": "kapla", "name": "LD Kapla", "region": "pohorska" },
+
+  { "id": "brje_erzelj", "name": "LD Brje-Erzelj", "region": "primorska" },
+  { "id": "brkini", "name": "LD Brkini", "region": "primorska" },
+  { "id": "bukovca", "name": "LD Bukovca", "region": "primorska" },
+  { "id": "dekani", "name": "LD Dekani", "region": "primorska" },
+  { "id": "dolce_komen", "name": "LD Dolce Komen", "region": "primorska" },
+  { "id": "fajti_hrib", "name": "LD Fajti Hrib", "region": "primorska" },
+
+  { "id": "gaberk_divaca", "name": "LD Gaberk Divača", "region": "primorska" },
+
+  { "id": "gradisce_kosana", "name": "LD Gradišče Kosana", "region": "primorska" },
+  { "id": "istra_gracisce", "name": "LD Istra-Gračišče", "region": "primorska" },
+  { "id": "izola", "name": "LD Izola", "region": "primorska" },
+  { "id": "jezero_komen", "name": "LD Jezero Komen", "region": "primorska" },
+  { "id": "kojnik_podgorje", "name": "LD Kojnik-Podgorje", "region": "primorska" },
+  { "id": "koper", "name": "LD Koper", "region": "primorska" },
+  { "id": "kras_dutovlje", "name": "LD Kras Dutovlje", "region": "primorska" },
+  { "id": "marezige", "name": "LD Marezige", "region": "primorska" },
+  { "id": "prem", "name": "LD Prem", "region": "primorska" },
+
+  { "id": "rasa_storje", "name": "LD Raša-Štorje", "region": "primorska" },
+
+  { "id": "rizana", "name": "LD Rižana", "region": "primorska" },
+  { "id": "senozece", "name": "LD Senožeče", "region": "primorska" },
+  { "id": "slavnik_materija", "name": "LD Slavnik Materija", "region": "primorska" },
+  { "id": "smarje", "name": "LD Šmarje", "region": "primorska" },
+  { "id": "stanjel", "name": "LD Štanjel", "region": "primorska" },
+  { "id": "strunjan", "name": "LD Strunjan", "region": "primorska" },
+
+  { "id": "tabor_dornberk", "name": "LD Tabor-Dornberk", "region": "primorska" },
+
+  { "id": "tabor_sezana", "name": "LD Tabor Sežana", "region": "primorska" },
+  { "id": "timav_vreme", "name": "LD Timav Vreme", "region": "primorska" },
+  { "id": "trstelj_kostanjevica", "name": "LD Trstelj Kostanjevica", "region": "primorska" },
+  { "id": "videz_kozina", "name": "LD Videz Kozina", "region": "primorska" },
+
+  { "id": "vrhe_vrabce", "name": "LD Vrhe-Vrabče", "region": "primorska" },
+
+  { "id": "zabnik_obrov", "name": "LD Žabnik-Obrov", "region": "primorska" },
+
+  { "id": "rakitna", "name": "LD Rakitna", "region": "notranjska" },
+  { "id": "rakovnik_skofljica", "name": "LD Rakovnik Skofljica", "region": "notranjska" },
+  { "id": "tabor_zagorje", "name": "LD Tabor Zagorje", "region": "notranjska" },
+  { "id": "tomiselj", "name": "LD Tomiselj", "region": "notranjska" },
+  { "id": "zemon", "name": "LD Zemon", "region": "notranjska" },
+  { "id": "zilce", "name": "LD Zilce", "region": "notranjska" },
+  { "id": "babno_polje", "name": "LD Babno Polje", "region": "notranjska" },
+  { "id": "begunje", "name": "LD Begunje", "region": "notranjska" },
+  { "id": "borovnica", "name": "LD Borovnica", "region": "notranjska" },
+  { "id": "cajnarje", "name": "LD Cajnarje", "region": "notranjska" },
+  { "id": "cerknica", "name": "LD Cerknica", "region": "notranjska" },
+  { "id": "gornje_jezero", "name": "LD Gornje Jezero", "region": "notranjska" },
+  { "id": "grahovo", "name": "LD Grahovo", "region": "notranjska" },
+  { "id": "ig", "name": "LD Ig", "region": "notranjska" },
+  { "id": "iga_vas", "name": "LD Iga Vas", "region": "notranjska" },
+  { "id": "javornik_postojna", "name": "LD Javornik Postojna", "region": "notranjska" },
+  { "id": "kozlek", "name": "LD Kozlek", "region": "notranjska" },
+  { "id": "loz_stari_trg", "name": "LD Loz Stari Trg", "region": "notranjska" },
+  { "id": "lpn_jelen", "name": "LD LPN Jelen", "region": "notranjska" },
+  { "id": "lpn_ljubljanski_vrh", "name": "LD LPN Ljubljanski Vrh", "region": "notranjska" },
+  { "id": "mokrc", "name": "LD Mokrc", "region": "notranjska" },
+  { "id": "nova_vas", "name": "LD Nova Vas", "region": "notranjska" },
+  { "id": "pivka", "name": "LD Pivka", "region": "notranjska" },
+  { "id": "prestranek", "name": "LD Prestranek", "region": "notranjska" },
+  { "id": "rakek", "name": "LD Rakek", "region": "notranjska" }
+]
