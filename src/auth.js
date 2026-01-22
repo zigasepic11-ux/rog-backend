@@ -10,15 +10,11 @@ function requireAuth(req, res, next) {
     }
 
     const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      return res.status(500).json({ error: "Missing JWT_SECRET in .env" });
-    }
+    if (!secret) return res.status(500).json({ error: "Missing JWT_SECRET in .env" });
 
-    const payload = jwt.verify(token, secret);
-    req.user = payload; // { code, ldId, role, name, iat, exp }
-
+    req.user = jwt.verify(token, secret);
     return next();
-  } catch (e) {
+  } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
 }
