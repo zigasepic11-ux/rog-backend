@@ -5,216 +5,156 @@ const { requireAuth } = require("../auth");
 
 const router = express.Router();
 
+/* ================= HELPERS ================= */
+
+function isSuper(req) {
+  return String(req.user?.code || "") === "999999" ||
+         String(req.user?.role || "") === "super";
+}
+
 function requireStaff(req, res, next) {
   const role = String(req.user?.role || "member");
-  if (role === "admin" || role === "moderator") return next();
+  if (role === "admin" || role === "moderator" || isSuper(req)) return next();
   return res.status(403).json({ error: "Forbidden (staff only)" });
 }
 
 function genPin4() {
-  // 4-mestni PIN, tudi z ničlami (0000–9999)
   return String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 }
 
-/**
- * GET /ld/dashboard
- */
+/* ================= DASHBOARD ================= */
+
 router.get("/dashboard", requireAuth, async (req, res) => {
   try {
-    const { ldId } = req.user || {};
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    const ldId = String(req.user?.ldId || "");
+    if (!ldId) return res.status(400).json({ error: "Missing ldId" });
 
     let ldName = ldId;
-    try {
-      const ldSnap = await admin.firestore().collection("lds").doc(ldId).get();
-      if (ldSnap.exists) {
-        const ldData = ldSnap.data() || {};
-        ldName = ldData.name || ldData.title || ldId;
-      }
-    } catch (_) {}
+    const ldSnap = await admin.firestore().collection("lds").doc(ldId).get();
+    if (ldSnap.exists) ldName = ldSnap.data()?.name || ldId;
 
-    const huntersSnap = await admin
-      .firestore()
+    const usersSnap = await admin.firestore()
       .collection("hunters")
       .where("ldId", "==", ldId)
       .get();
 
-    const usersCount = huntersSnap.size;
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const logsSnap = await admin.firestore()
+      .collection("hunt_logs")
+      .where("ldId", "==", ldId)
+      .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(startOfMonth))
+      .get();
 
-    let huntsThisMonth = 0;
-    try {
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), 1);
-
-      const logsSnap = await admin
-        .firestore()
-        .collection("hunt_logs")
-        .where("ldId", "==", ldId)
-        .where("createdAt", ">=", start.toISOString())
-        .get();
-
-      huntsThisMonth = logsSnap.size;
-    } catch (_) {
-      huntsThisMonth = 0;
-    }
-
-    return res.json({
+    res.json({
       ok: true,
       ldId,
       ldName,
-      usersCount,
-      huntsThisMonth,
+      usersCount: usersSnap.size,
+      huntsThisMonth: logsSnap.size,
       lastSync: new Date().toISOString(),
     });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
+    res.status(500).json({ error: "Server error", detail: String(e) });
   }
 });
 
-/**
- * GET /ld/users
- * Vrne vse hunters za ldId iz tokena
- */
+/* ================= USERS ================= */
+
 router.get("/users", requireAuth, requireStaff, async (req, res) => {
+  const ldId = String(req.user?.ldId || "");
+  const snap = await admin.firestore()
+    .collection("hunters")
+    .where("ldId", "==", ldId)
+    .get();
+
+  res.json({
+    ok: true,
+    users: snap.docs.map(d => ({
+      code: d.id,
+      ...d.data(),
+    })),
+  });
+});
+
+router.post("/users", requireAuth, requireStaff, async (req, res) => {
+  const { code, name, role = "member" } = req.body;
+  const ldId = String(req.user?.ldId || "");
+
+  const pin = genPin4();
+  const pinHash = await bcrypt.hash(pin, 10);
+
+  await admin.firestore().collection("hunters").doc(code).set({
+    name,
+    role,
+    ldId,
+    enabled: true,
+    pinHash,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  res.json({ ok: true, code, pin });
+});
+
+/* ================= ACTIVE HUNTS (TO JE MANJKALO) ================= */
+
+router.get("/active-hunts", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "");
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!ldId) return res.status(400).json({ error: "Missing ldId" });
 
-    const snap = await admin
-      .firestore()
-      .collection("hunters")
+    const snap = await admin.firestore()
+      .collection("active_hunts")
       .where("ldId", "==", ldId)
+      .orderBy("startedAt", "desc")
       .get();
 
-    const users = snap.docs.map((d) => {
-      const x = d.data() || {};
+    const hunts = snap.docs.map(d => {
+      const x = d.data();
       return {
-        code: d.id,
-        name: x.name || "",
-        role: x.role || "member",
-        enabled: x.enabled === true,
-        createdAt: x.createdAt || null,
+        uid: d.id,
+        hunterId: x.hunterId,
+        hunterCode: x.hunterCode,
+        hunterName: x.hunterName,
+        ldId: x.ldId,
+        locationMode: x.locationMode,
+        locationName: x.locationName,
+        lat: typeof x.lat === "number" ? x.lat : null,
+        lng: typeof x.lng === "number" ? x.lng : null,
+        approxLat: typeof x.approxLat === "number" ? x.approxLat : null,
+        approxLng: typeof x.approxLng === "number" ? x.approxLng : null,
+        approxRadiusM: typeof x.approxRadiusM === "number" ? x.approxRadiusM : null,
+        poiName: x.poiName || null,
+        poiType: x.poiType || null,
+        startedAt: x.startedAt?.toDate
+          ? x.startedAt.toDate().toISOString()
+          : null,
       };
     });
 
-    users.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-
-    return res.json({ ok: true, users });
+    res.json({ ok: true, hunts });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
+    res.status(500).json({ error: "Server error", detail: String(e) });
   }
 });
 
-/**
- * POST /ld/users
- * body: { code, name, role }
- * Ustvari hunterja v isti LD. Ustvari pinHash. Vrne začetni PIN (samo enkrat).
- */
-router.post("/users", requireAuth, requireStaff, async (req, res) => {
-  try {
-    const ldId = String(req.user?.ldId || "");
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+/* ================= HUNT LOGS ================= */
 
-    const code = String(req.body?.code || "").trim();
-    const name = String(req.body?.name || "").trim();
-    const role = String(req.body?.role || "member").trim();
+router.get("/hunt-logs", requireAuth, requireStaff, async (req, res) => {
+  const ldId = String(req.user?.ldId || "");
+  const snap = await admin.firestore()
+    .collection("hunt_logs")
+    .where("ldId", "==", ldId)
+    .orderBy("finishedAt", "desc")
+    .limit(500)
+    .get();
 
-    if (!code) return res.status(400).json({ error: "Missing code" });
-    if (!name) return res.status(400).json({ error: "Missing name" });
-
-    if (!["member", "moderator", "admin"].includes(role)) {
-      return res.status(400).json({ error: "Invalid role" });
-    }
-
-    const ref = admin.firestore().collection("hunters").doc(code);
-    const existing = await ref.get();
-    if (existing.exists) return res.status(409).json({ error: "User code already exists" });
-
-    const pin = genPin4();
-    const pinHash = await bcrypt.hash(pin, 10);
-
-    await ref.set({
-      name,
-      role,
-      ldId,
-      enabled: true,
-      pinHash,
-      pin: admin.firestore.FieldValue.delete(), // če obstaja star plaintext pin, ga pobrišemo
-      createdAt: new Date().toISOString(),
-    });
-
-    return res.json({
-      ok: true,
-      user: { code, name, role, enabled: true, ldId },
-      pin, // pokažeš adminu, potem ga posreduje uporabniku
-    });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
-  }
-});
-
-/**
- * PATCH /ld/users/:code/enabled
- * body: { enabled: true/false }
- */
-router.patch("/users/:code/enabled", requireAuth, requireStaff, async (req, res) => {
-  try {
-    const ldId = String(req.user?.ldId || "");
-    const code = String(req.params.code || "").trim();
-    const enabled = !!req.body?.enabled;
-
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
-    if (!code) return res.status(400).json({ error: "Missing code" });
-
-    const ref = admin.firestore().collection("hunters").doc(code);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({ error: "User not found" });
-
-    const data = snap.data() || {};
-    if (String(data.ldId || "") !== ldId) return res.status(403).json({ error: "Forbidden (other LD)" });
-
-    await ref.set({ enabled }, { merge: true });
-
-    return res.json({ ok: true, code, enabled });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
-  }
-});
-
-/**
- * POST /ld/users/:code/reset-pin
- * Generira nov PIN, shrani pinHash, vrne PIN (samo adminu)
- */
-router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res) => {
-  try {
-    const ldId = String(req.user?.ldId || "");
-    const code = String(req.params.code || "").trim();
-
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
-    if (!code) return res.status(400).json({ error: "Missing code" });
-
-    const ref = admin.firestore().collection("hunters").doc(code);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({ error: "User not found" });
-
-    const data = snap.data() || {};
-    if (String(data.ldId || "") !== ldId) return res.status(403).json({ error: "Forbidden (other LD)" });
-
-    const newPin = genPin4();
-    const newHash = await bcrypt.hash(newPin, 10);
-
-    await ref.set(
-      {
-        pinHash: newHash,
-        pin: admin.firestore.FieldValue.delete(),
-      },
-      { merge: true }
-    );
-
-    return res.json({ ok: true, code, pin: newPin });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
-  }
+  res.json({
+    ok: true,
+    logs: snap.docs.map(d => ({
+      id: d.id,
+      ...d.data(),
+    })),
+  });
 });
 
 module.exports = router;
