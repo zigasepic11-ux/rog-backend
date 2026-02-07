@@ -4,8 +4,7 @@
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
-    "dev": "node src/index.js",
-    "start": "node src/index.js"
+    "dev": "node src/index.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
@@ -13,6 +12,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.19.2",
     "firebase-admin": "^12.5.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "xlsx": "^0.18.5"
   }
 }

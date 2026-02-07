@@ -1,12 +1,12 @@
+// src/firebase.js
 const admin = require("firebase-admin");
 const fs = require("fs");
 const path = require("path");
 
 function initFirebase() {
-  // Če je že inicializiran, ne delaj nič
   if (admin.apps.length) return admin;
 
-  // ✅ Render/production: JSON v ENV
+  // Render/production: JSON v env
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (json && json.trim()) {
     const serviceAccount = JSON.parse(json);
@@ -16,7 +16,7 @@ function initFirebase() {
     return admin;
   }
 
-  // ✅ Lokalno: pot do datoteke (npr. ./serviceAccountKey.json)
+  // Lokalno: pot do datoteke
   const p = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!p) {
     throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT");
