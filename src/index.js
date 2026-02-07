@@ -1,4 +1,4 @@
-// index.js
+// src/index.js
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
@@ -10,7 +10,19 @@ const app = express();
 app.set("trust proxy", 1);
 
 // -----------------------------
-// ✅ CORS (EN origin, allow-list)
+// ✅ VERSION marker (debug)
+// -----------------------------
+app.get("/__version", (req, res) => {
+  res.json({
+    ok: true,
+    marker: "ROG-BACKEND",
+    commit: "df0cfbf", // <- po želji spremeni v aktualen commit hash/oznako
+    time: new Date().toISOString(),
+  });
+});
+
+// -----------------------------
+// ✅ CORS (ENV origin, allow-list)
 // -----------------------------
 const allowList = String(process.env.CORS_ORIGIN || "")
   .split(",")
@@ -19,15 +31,9 @@ const allowList = String(process.env.CORS_ORIGIN || "")
 
 const corsOptions = {
   origin: (origin, cb) => {
-    // Requests brez origin (npr. server-to-server) -> allow
     if (!origin) return cb(null, true);
-
-    // Če allowList ni nastavljen -> allow all (dev / MVP)
     if (allowList.length === 0) return cb(null, true);
-
-    // ✅ FIX: callback naj vrne true/false (ne origin string)
-    if (allowList.includes(origin)) return cb(null, true);
-
+    if (allowList.includes(origin)) return cb(null, origin);
     return cb(new Error(`CORS blocked: ${origin}`), false);
   },
   credentials: true,
