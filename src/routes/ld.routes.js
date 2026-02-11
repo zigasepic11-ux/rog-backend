@@ -1,7 +1,7 @@
 // src/routes/ld.routes.js
 const express = require("express");
 const bcrypt = require("bcrypt");
-const XLSX = require("xlsx"); // ✅ NEW (npm i xlsx)
+const XLSX = require("xlsx"); // npm i xlsx
 const { admin } = require("../firebase");
 const { requireAuth } = require("../auth");
 
@@ -21,6 +21,11 @@ function isStaff(req) {
 function requireStaff(req, res, next) {
   if (isStaff(req)) return next();
   return res.status(403).json({ error: "Forbidden (staff only)" });
+}
+
+function requireSuper(req, res, next) {
+  if (isSuper(req)) return next();
+  return res.status(403).json({ error: "Forbidden (super only)" });
 }
 
 function genPin4() {
@@ -62,7 +67,6 @@ function pct(n, d) {
 }
 
 // Pretvori excel row v normaliziran key (da se ujema z app harvestItems.key)
-// primer: species="srna", class="mladiči moškega spola" -> "SRNA__MLADICI_MOSKEGA_SPOLA"
 function makeKey(species, cls) {
   const clean = (s) =>
     safeStr(s)
@@ -137,7 +141,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
 
 /* ================= USERS (hunters) ================= */
 
-// Staff (moderator/super) vidi uporabnike svoje LD
+// Staff vidi uporabnike svoje LD
 router.get("/users", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -179,7 +183,6 @@ router.post("/users", requireAuth, requireStaff, async (req, res) => {
     if (!name) return res.status(400).json({ error: "Missing name" });
     if (!["member", "moderator", "super"].includes(role)) return res.status(400).json({ error: "Invalid role" });
 
-    // moderator ne sme ustvariti super
     if (!isSuper(req) && role === "super") return res.status(403).json({ error: "Forbidden (cannot create super)" });
 
     const ref = admin.firestore().collection("hunters").doc(code);
@@ -209,7 +212,7 @@ router.post("/users", requireAuth, requireStaff, async (req, res) => {
   }
 });
 
-// Staff: spremeni uporabnika (enabled/name/role) - samo v svoji LD
+// Staff: spremeni uporabnika
 router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -245,7 +248,7 @@ router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
   }
 });
 
-// ✅ Staff: trajno izbriši uporabnika
+// Staff: trajno izbriši uporabnika
 router.delete("/users/:code", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -259,24 +262,18 @@ router.delete("/users/:code", requireAuth, requireStaff, async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
-
-    // moderator ne sme brisat druge LD
     if (!isSuper(req) && String(data.ldId || "") !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
     await ref.delete();
-
     return res.json({ ok: true, deleted: code });
   } catch (e) {
-    return res.status(500).json({
-      error: "Server error",
-      detail: String(e?.stack || e?.message || e),
-    });
+    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
   }
 });
 
-// Staff: reset PIN (vrne nov pin)
+// Staff: reset PIN
 router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -311,8 +308,6 @@ router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res
 
 /* ================= ACTIVE HUNTS ================= */
 
-// GET /ld/active-hunts
-// member + moderator + super: read (samo svoj LD)
 router.get("/active-hunts", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -329,7 +324,7 @@ router.get("/active-hunts", requireAuth, async (req, res) => {
       const x = d.data() || {};
       return {
         uid: d.id,
-        hunterId: x.hunterId || null, // firebase uid owner
+        hunterId: x.hunterId || null,
         hunterName: x.hunterName || null,
         ldId: x.ldId || null,
         locationMode: x.locationMode || "private_text",
@@ -353,7 +348,7 @@ router.get("/active-hunts", requireAuth, async (req, res) => {
 
 /* ================= LD POINTS ================= */
 
-// GET /ld/points (member+)
+// GET /ld/points
 router.get("/points", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -385,10 +380,137 @@ router.get("/points", requireAuth, async (req, res) => {
   }
 });
 
+/* ================= IMPORT LD POINTS (SUPER ONLY, anti-duplicate by pointId) =================
+   POST /ld/points/import
+   body: { filename, contentBase64 }
+   Supported: .csv, .xlsx, .xls
+   Required columns: pointId, ldId, lat, lng
+*/
+
+function parseNum(v) {
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+function cleanStr(v) {
+  return (v == null ? "" : String(v)).trim();
+}
+
+function normalizePointRow(raw) {
+  return {
+    pointId: cleanStr(raw.pointId),
+    ldId: cleanStr(raw.ldId),
+    ldName: cleanStr(raw.ldName),
+    type: cleanStr(raw.type),
+    name: cleanStr(raw.name),
+    lat: parseNum(raw.lat),
+    lng: parseNum(raw.lng),
+    notes: cleanStr(raw.notes),
+    status: cleanStr(raw.status) || "active",
+    source: cleanStr(raw.source) || "import",
+  };
+}
+
+router.post("/points/import", requireAuth, requireSuper, async (req, res) => {
+  try {
+    const filename = cleanStr(req.body?.filename);
+    const contentBase64 = cleanStr(req.body?.contentBase64);
+    if (!contentBase64) return res.status(400).json({ error: "Missing contentBase64" });
+
+    const buf = Buffer.from(contentBase64, "base64");
+    const lower = filename.toLowerCase();
+
+    const isCsv = lower.endsWith(".csv");
+    const isXlsx = lower.endsWith(".xlsx") || lower.endsWith(".xls");
+
+    let rows = [];
+
+    if (isCsv) {
+      // basic CSV parser (for simple templates)
+      const text = buf.toString("utf8");
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
+      if (!lines.length) return res.status(400).json({ error: "CSV is empty" });
+
+      const headers = lines[0].split(",").map((h) => h.trim());
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(",");
+        const obj = {};
+        for (let c = 0; c < headers.length; c++) obj[headers[c]] = (parts[c] ?? "").trim();
+        rows.push(obj);
+      }
+    } else if (isXlsx) {
+      const wb = XLSX.read(buf, { type: "buffer" });
+      const first = wb.SheetNames?.[0];
+      if (!first) return res.status(400).json({ error: "XLSX has no sheets" });
+      const ws = wb.Sheets[first];
+      rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    } else {
+      return res.status(400).json({ error: "Unsupported file type. Use .csv or .xlsx" });
+    }
+
+    const db = admin.firestore();
+    const col = db.collection("ld_points");
+
+    const batchSize = 450; // safe under 500 ops
+    let batch = db.batch();
+    let count = 0;
+
+    let importedOrUpdated = 0;
+    let skipped = 0;
+
+    for (const raw of rows) {
+      const r = normalizePointRow(raw);
+
+      // required
+      if (!r.pointId || !r.ldId || r.lat == null || r.lng == null) {
+        skipped++;
+        continue;
+      }
+
+      const ref = col.doc(r.pointId);
+
+      batch.set(
+        ref,
+        {
+          ldId: r.ldId,
+          ldName: r.ldName || null,
+          type: r.type || "",
+          name: r.name || "",
+          lat: r.lat,
+          lng: r.lng,
+          notes: r.notes || "",
+          status: r.status || "active",
+          source: r.source || "import",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true } // ✅ anti-dupliranje: isti pointId = update
+      );
+
+      importedOrUpdated++;
+      count++;
+
+      if (count >= batchSize) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+
+    if (count > 0) await batch.commit();
+
+    return res.json({ ok: true, importedOrUpdated, skipped });
+  } catch (e) {
+    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+  }
+});
+
 /* ================= ODVZEM: IMPORT PLAN + VIEW ================= */
 
-// POST /ld/odvzem-plan/import-excel?year=2025  (staff only)
-// body: { filename, contentBase64 }
 router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -407,13 +529,8 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
     if (!first) return res.status(400).json({ error: "XLSX has no sheets" });
 
     const ws = wb.Sheets[first];
-
-    // matrix (headerless)
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
 
-    // Tvoj excel ima headerje v prvih vrsticah.
-    // Kolone (po tvojem file-u):
-    // 0 divjad, 1 strukturni razred, 2 načrt, 3 izvršeni odstrel, ... , 13 skupaj odvzem, 14 odstotek
     let currentSpecies = "";
     const items = [];
 
@@ -426,11 +543,8 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
       const s0 = safeStr(c0);
       const s1 = safeStr(c1);
 
-      // skip header line "divjad"
       if (s0.toLowerCase() === "divjad") continue;
 
-      // če je v col0 ime divjadi -> set currentSpecies
-      // (ignoriramo title/metadata)
       if (
         s0 &&
         s0.toLowerCase() !== "realizacija odvzema" &&
@@ -441,13 +555,11 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
       }
 
       const plan = num(r[2]);
-      const executedFromExcel = num(r[3]); // samo informativno
+      const executedFromExcel = num(r[3]);
       const total = num(r[13]);
       const percentExcel = num(r[14]);
 
       if (!safeStr(currentSpecies)) continue;
-
-      // če ni class in ni nobene številke -> skip
       if (!s1 && plan == null && executedFromExcel == null && total == null && percentExcel == null) continue;
 
       const classLabel = s1 || "skupaj";
@@ -486,8 +598,6 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
   }
 });
 
-// GET /ld/odvzem-view?year=2025
-// Vrne view (plan rows iz excel + avtomatska realizacija iz hunt_logs.harvestItems)
 router.get("/odvzem-view", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -496,14 +606,12 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
     const year = Number(req.query?.year || 0);
     if (!year || year < 2020 || year > 2100) return res.status(400).json({ error: "Invalid year" });
 
-    // 1) load plan
     const planId = `${ldId}_${year}`;
     const planSnap = await admin.firestore().collection("odvzem_plans").doc(planId).get();
 
     const plan = planSnap.exists ? planSnap.data() || {} : {};
     const items = Array.isArray(plan.items) ? plan.items : [];
 
-    // 2) compute realizacija from hunt_logs
     const start = admin.firestore.Timestamp.fromDate(new Date(year, 0, 1, 0, 0, 0));
     const end = admin.firestore.Timestamp.fromDate(new Date(year + 1, 0, 1, 0, 0, 0));
 
@@ -538,13 +646,12 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
       }
     }
 
-    // 3) build rows like excel
     const rows = items.map((it) => {
       const key = safeStr(it?.key);
       const planCount = Number(it?.plan || 0);
       const executed = Number(byKey[key] || 0);
       const pending = Number(pendingByKey[key] || 0);
-      const total = executed; // pending se ne šteje v realizacijo (zaenkrat)
+      const total = executed;
       return {
         key,
         species: safeStr(it?.species),
@@ -574,7 +681,6 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
 
 /* ================= HUNT LOGS ================= */
 
-// GET /ld/hunt-logs (member+)
 router.get("/hunt-logs", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -605,7 +711,7 @@ router.get("/hunt-logs", requireAuth, async (req, res) => {
       return {
         id: d.id,
         hunterName: x.hunterName || "",
-        hunterId: x.hunterId || "", // firebase uid (ni “code”)
+        hunterId: x.hunterId || "",
         ldId: x.ldId || "",
         startedAt: toIsoMaybe(x.startedAt),
         finishedAt: toIsoMaybe(x.finishedAt),
@@ -625,7 +731,6 @@ router.get("/hunt-logs", requireAuth, async (req, res) => {
         approxLng: numOrNull(x.approxLng),
         approxRadiusM: numOrNull(x.approxRadiusM),
 
-        // ✅ NEW (ko Flutter doda)
         harvestItems: Array.isArray(x.harvestItems) ? x.harvestItems : [],
         pendingItems: Array.isArray(x.pendingItems) ? x.pendingItems : [],
       };
@@ -638,53 +743,3 @@ router.get("/hunt-logs", requireAuth, async (req, res) => {
 });
 
 module.exports = router;
-
-// ================= IMPORT LD POINTS (staff only) =================
-
-router.post("/points/import-csv", requireAuth, requireStaff, async (req, res) => {
-  try {
-    const ldId = String(req.user?.ldId || "").trim();
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
-
-    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    if (!rows.length) return res.status(400).json({ error: "Missing rows[]" });
-
-    const batch = admin.firestore().batch();
-    const col = admin.firestore().collection("ld_points");
-
-    let processed = 0;
-
-    for (const r of rows) {
-      const pointId = String(r.pointId || "").trim();
-      if (!pointId) continue;
-
-      const ref = col.doc(pointId);
-
-      batch.set(
-        ref,
-        {
-          ldId,
-          ldName: r.ldName || "",
-          name: r.name || "",
-          type: r.type || "",
-          lat: Number(r.lat),
-          lng: Number(r.lng),
-          notes: r.notes || "",
-          status: r.status || "active",
-          source: r.source || "",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true } // 👈 KLJUČNO (brez brisanja)
-      );
-
-      processed++;
-    }
-
-    await batch.commit();
-
-    return res.json({ ok: true, processed });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
-  }
-});
-
