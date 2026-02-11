@@ -638,3 +638,53 @@ router.get("/hunt-logs", requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+
+// ================= IMPORT LD POINTS (staff only) =================
+
+router.post("/points/import-csv", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ error: "Missing rows[]" });
+
+    const batch = admin.firestore().batch();
+    const col = admin.firestore().collection("ld_points");
+
+    let processed = 0;
+
+    for (const r of rows) {
+      const pointId = String(r.pointId || "").trim();
+      if (!pointId) continue;
+
+      const ref = col.doc(pointId);
+
+      batch.set(
+        ref,
+        {
+          ldId,
+          ldName: r.ldName || "",
+          name: r.name || "",
+          type: r.type || "",
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          notes: r.notes || "",
+          status: r.status || "active",
+          source: r.source || "",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true } // 👈 KLJUČNO (brez brisanja)
+      );
+
+      processed++;
+    }
+
+    await batch.commit();
+
+    return res.json({ ok: true, processed });
+  } catch (e) {
+    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
+  }
+});
+
