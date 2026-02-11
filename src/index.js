@@ -9,6 +9,9 @@ initFirebase();
 const app = express();
 app.set("trust proxy", 1);
 
+// ✅ IMPORTANT: disable etag -> no more 304 Not Modified caching
+app.set("etag", false);
+
 // -----------------------------
 // ✅ VERSION marker (debug)
 // -----------------------------
@@ -16,7 +19,7 @@ app.get("/__version", (req, res) => {
   res.json({
     ok: true,
     marker: "ROG-BACKEND",
-    commit: "df0cfbf", // <- po želji spremeni v aktualen commit hash/oznako
+    commit: "df0cfbf",
     time: new Date().toISOString(),
   });
 });
@@ -44,7 +47,17 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-app.use(express.json({ limit: "2mb" }));
+// ✅ bigger limit because file base64 upload
+app.use(express.json({ limit: "10mb" }));
+
+// ✅ IMPORTANT: disable caching everywhere for API
+app.use((req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  next();
+});
 
 // -----------------------------
 // ✅ Logger
@@ -87,7 +100,6 @@ else console.error("❌ FAILED loading ./routes/auth.routes\n", authLoad.error);
 if (ldLoad.ok) app.use("/ld", ldLoad.router);
 else console.error("❌ FAILED loading ./routes/ld.routes\n", ldLoad.error);
 
-// Debug endpoint: pove ali sta route-a pravilno mountana
 app.get("/debug/routes", (req, res) => {
   res.json({
     ok: true,
@@ -98,14 +110,8 @@ app.get("/debug/routes", (req, res) => {
   });
 });
 
-// -----------------------------
-// ✅ 404
-// -----------------------------
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
-// -----------------------------
-// ✅ Error handler
-// -----------------------------
 app.use((err, req, res, next) => {
   console.error("🔥 UNHANDLED ERROR:", err);
   res.status(500).json({
@@ -114,9 +120,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// -----------------------------
-// ✅ Start server
-// -----------------------------
 const PORT = Number(process.env.PORT || 3001);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 ROG backend running on http://0.0.0.0:${PORT}`);

@@ -183,6 +183,7 @@ router.post("/users", requireAuth, requireStaff, async (req, res) => {
     if (!name) return res.status(400).json({ error: "Missing name" });
     if (!["member", "moderator", "super"].includes(role)) return res.status(400).json({ error: "Invalid role" });
 
+    // moderator ne sme ustvariti super
     if (!isSuper(req) && role === "super") return res.status(403).json({ error: "Forbidden (cannot create super)" });
 
     const ref = admin.firestore().collection("hunters").doc(code);
@@ -225,7 +226,9 @@ router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
-    if (!isSuper(req) && String(data.ldId || "") !== ldId) return res.status(403).json({ error: "Forbidden (other LD)" });
+    if (!isSuper(req) && String(data.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
 
     const patch = {};
 
@@ -262,6 +265,8 @@ router.delete("/users/:code", requireAuth, requireStaff, async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
+
+    // moderator ne sme brisat druge LD
     if (!isSuper(req) && String(data.ldId || "") !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
@@ -286,7 +291,9 @@ router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
-    if (!isSuper(req) && String(data.ldId || "") !== ldId) return res.status(403).json({ error: "Forbidden (other LD)" });
+    if (!isSuper(req) && String(data.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
 
     const newPin = genPin4();
     const newHash = await bcrypt.hash(newPin, 10);
@@ -308,6 +315,7 @@ router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res
 
 /* ================= ACTIVE HUNTS ================= */
 
+// member + moderator + super: read (samo svoj LD)
 router.get("/active-hunts", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -348,7 +356,7 @@ router.get("/active-hunts", requireAuth, async (req, res) => {
 
 /* ================= LD POINTS ================= */
 
-// GET /ld/points
+// GET /ld/points (member+)
 router.get("/points", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -360,6 +368,7 @@ router.get("/points", requireAuth, async (req, res) => {
       const x = d.data() || {};
       return {
         id: d.id,
+        pointId: x.pointId || null,
         lat: numOrNull(x.lat),
         lng: numOrNull(x.lng),
         ldId: x.ldId || null,
@@ -380,14 +389,29 @@ router.get("/points", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= IMPORT LD POINTS (SUPER ONLY, anti-duplicate by pointId) =================
-   POST /ld/points/import
-   body: { filename, contentBase64 }
-   Supported: .csv, .xlsx, .xls
-   Required columns: pointId, ldId, lat, lng
-*/
+/* ================= POINTS IMPORT (SUPER ONLY, anti-duplicate) ================= */
 
-function parseNum(v) {
+function normalizeHeaderKey(k) {
+  return String(k || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\*/g, "")
+    .replace(/\s+/g, "")
+    .replace(/č/g, "c")
+    .replace(/š/g, "s")
+    .replace(/ž/g, "z");
+}
+
+function safeDocId(s) {
+  return String(s || "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseLatLng(v) {
   if (v == null) return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
   const s = String(v).trim();
@@ -396,114 +420,138 @@ function parseNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function cleanStr(v) {
-  return (v == null ? "" : String(v)).trim();
-}
-
-function normalizePointRow(raw) {
-  return {
-    pointId: cleanStr(raw.pointId),
-    ldId: cleanStr(raw.ldId),
-    ldName: cleanStr(raw.ldName),
-    type: cleanStr(raw.type),
-    name: cleanStr(raw.name),
-    lat: parseNum(raw.lat),
-    lng: parseNum(raw.lng),
-    notes: cleanStr(raw.notes),
-    status: cleanStr(raw.status) || "active",
-    source: cleanStr(raw.source) || "import",
-  };
-}
-
-router.post("/points/import", requireAuth, requireSuper, async (req, res) => {
+// POST /ld/points/import-file  (super only)
+// body: { filename, contentBase64 }
+router.post("/points/import-file", requireAuth, requireSuper, async (req, res) => {
   try {
-    const filename = cleanStr(req.body?.filename);
-    const contentBase64 = cleanStr(req.body?.contentBase64);
-    if (!contentBase64) return res.status(400).json({ error: "Missing contentBase64" });
+    const ldId = String(req.user?.ldId || "").trim();
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
 
-    const buf = Buffer.from(contentBase64, "base64");
-    const lower = filename.toLowerCase();
+    const filename = safeStr(req.body?.filename) || "points.xlsx";
+    const b64 = safeStr(req.body?.contentBase64);
+    if (!b64) return res.status(400).json({ error: "Missing contentBase64" });
 
-    const isCsv = lower.endsWith(".csv");
-    const isXlsx = lower.endsWith(".xlsx") || lower.endsWith(".xls");
+    const buf = Buffer.from(b64, "base64");
 
-    let rows = [];
+    const wb = XLSX.read(buf, { type: "buffer" });
+    const first = wb.SheetNames?.[0];
+    if (!first) return res.status(400).json({ error: "File has no sheets" });
 
-    if (isCsv) {
-      // basic CSV parser (for simple templates)
-      const text = buf.toString("utf8");
-      const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
-      if (!lines.length) return res.status(400).json({ error: "CSV is empty" });
+    const ws = wb.Sheets[first];
+    const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-      const headers = lines[0].split(",").map((h) => h.trim());
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split(",");
-        const obj = {};
-        for (let c = 0; c < headers.length; c++) obj[headers[c]] = (parts[c] ?? "").trim();
-        rows.push(obj);
-      }
-    } else if (isXlsx) {
-      const wb = XLSX.read(buf, { type: "buffer" });
-      const first = wb.SheetNames?.[0];
-      if (!first) return res.status(400).json({ error: "XLSX has no sheets" });
-      const ws = wb.Sheets[first];
-      rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-    } else {
-      return res.status(400).json({ error: "Unsupported file type. Use .csv or .xlsx" });
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({ error: "File has no data rows" });
     }
+
+    // normalize headers
+    const normalizedRows = raw.map((row) => {
+      const out = {};
+      for (const k of Object.keys(row || {})) {
+        out[normalizeHeaderKey(k)] = row[k];
+      }
+      return out;
+    });
 
     const db = admin.firestore();
     const col = db.collection("ld_points");
 
-    const batchSize = 450; // safe under 500 ops
+    const BATCH_LIMIT = 450; // safe under 500
     let batch = db.batch();
-    let count = 0;
+    let ops = 0;
 
-    let importedOrUpdated = 0;
+    let processed = 0;
     let skipped = 0;
 
-    for (const raw of rows) {
-      const r = normalizePointRow(raw);
+    // dedupe inside file
+    const seen = new Set();
 
-      // required
-      if (!r.pointId || !r.ldId || r.lat == null || r.lng == null) {
+    for (const r of normalizedRows) {
+      // expected keys from template:
+      // ldid, ldime, type, name, lat, lng, notes, status, source, pointid
+
+      const rowLdId = safeStr(r.ldid);
+      const pointId = safeStr(r.pointid);
+
+      // ignore empty/instruction rows
+      if (!rowLdId && !pointId && !safeStr(r.name)) {
         skipped++;
         continue;
       }
 
-      const ref = col.doc(r.pointId);
+      if (!rowLdId) {
+        skipped++;
+        continue;
+      }
 
-      batch.set(
-        ref,
-        {
-          ldId: r.ldId,
-          ldName: r.ldName || null,
-          type: r.type || "",
-          name: r.name || "",
-          lat: r.lat,
-          lng: r.lng,
-          notes: r.notes || "",
-          status: r.status || "active",
-          source: r.source || "import",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true } // ✅ anti-dupliranje: isti pointId = update
-      );
+      // file must match selected LD (super uses switch-ld)
+      if (rowLdId !== ldId) {
+        return res.status(400).json({
+          error: `LD mismatch: file row ldId="${rowLdId}", token ldId="${ldId}". (Najprej switch-ld na pravo LD)`,
+        });
+      }
 
-      importedOrUpdated++;
-      count++;
+      if (!pointId) {
+        return res.status(400).json({ error: "Missing pointId on some row (pointId je obvezen)" });
+      }
 
-      if (count >= batchSize) {
+      const docId = safeDocId(`${ldId}__${pointId}`);
+      if (!docId) {
+        skipped++;
+        continue;
+      }
+
+      if (seen.has(docId)) {
+        skipped++;
+        continue;
+      }
+      seen.add(docId);
+
+      const lat = parseLatLng(r.lat);
+      const lng = parseLatLng(r.lng);
+      if (lat == null || lng == null) {
+        skipped++;
+        continue;
+      }
+
+      const ref = col.doc(docId);
+
+      const data = {
+        pointId,
+        ldId,
+        ldName: safeStr(r.ldime) || "",
+        type: safeStr(r.type) || "",
+        name: safeStr(r.name) || "",
+        lat,
+        lng,
+        notes: safeStr(r.notes) || "",
+        status: safeStr(r.status) || "active",
+        source: safeStr(r.source) || "import",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // merge=true => isti docId samo posodobi (anti-duplicate)
+      batch.set(ref, data, { merge: true });
+      ops++;
+      processed++;
+
+      if (ops >= BATCH_LIMIT) {
         await batch.commit();
         batch = db.batch();
-        count = 0;
+        ops = 0;
       }
     }
 
-    if (count > 0) await batch.commit();
+    if (ops > 0) await batch.commit();
 
-    return res.json({ ok: true, importedOrUpdated, skipped });
+    return res.json({
+      ok: true,
+      filename,
+      ldId,
+      processed,
+      skipped,
+      message: "Import OK (dedupe by ldId__pointId, merge=true).",
+    });
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
   }
@@ -511,6 +559,8 @@ router.post("/points/import", requireAuth, requireSuper, async (req, res) => {
 
 /* ================= ODVZEM: IMPORT PLAN + VIEW ================= */
 
+// POST /ld/odvzem-plan/import-excel?year=2025  (staff only)
+// body: { filename, contentBase64 }
 router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -529,19 +579,19 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
     if (!first) return res.status(400).json({ error: "XLSX has no sheets" });
 
     const ws = wb.Sheets[first];
+
+    // matrix (headerless)
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
 
+    // Kolone (po tvojem file-u):
+    // 0 divjad, 1 strukturni razred, 2 načrt, 3 izvršeni odstrel, ... , 13 skupaj odvzem, 14 odstotek
     let currentSpecies = "";
     const items = [];
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i] || [];
-
-      const c0 = r[0];
-      const c1 = r[1];
-
-      const s0 = safeStr(c0);
-      const s1 = safeStr(c1);
+      const s0 = safeStr(r[0]);
+      const s1 = safeStr(r[1]);
 
       if (s0.toLowerCase() === "divjad") continue;
 
@@ -598,6 +648,7 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
   }
 });
 
+// GET /ld/odvzem-view?year=2025
 router.get("/odvzem-view", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -606,12 +657,14 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
     const year = Number(req.query?.year || 0);
     if (!year || year < 2020 || year > 2100) return res.status(400).json({ error: "Invalid year" });
 
+    // 1) load plan
     const planId = `${ldId}_${year}`;
     const planSnap = await admin.firestore().collection("odvzem_plans").doc(planId).get();
 
     const plan = planSnap.exists ? planSnap.data() || {} : {};
     const items = Array.isArray(plan.items) ? plan.items : [];
 
+    // 2) compute realizacija from hunt_logs
     const start = admin.firestore.Timestamp.fromDate(new Date(year, 0, 1, 0, 0, 0));
     const end = admin.firestore.Timestamp.fromDate(new Date(year + 1, 0, 1, 0, 0, 0));
 
@@ -651,7 +704,7 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
       const planCount = Number(it?.plan || 0);
       const executed = Number(byKey[key] || 0);
       const pending = Number(pendingByKey[key] || 0);
-      const total = executed;
+      const total = executed; // pending se ne šteje v realizacijo (zaenkrat)
       return {
         key,
         species: safeStr(it?.species),
@@ -681,6 +734,7 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
 
 /* ================= HUNT LOGS ================= */
 
+// GET /ld/hunt-logs (member+)
 router.get("/hunt-logs", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
