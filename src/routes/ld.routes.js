@@ -420,9 +420,13 @@ function parseLatLng(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-// POST /ld/points/import-file  (super only)
-// body: { filename, contentBase64 }
-router.post("/points/import-file", requireAuth, requireSuper, async (req, res) => {
+/**
+ * ✅ POPRAVEK:
+ * Skupna logika importa v funkciji, da lahko mountamo 2 endpointa:
+ *  - POST /ld/points/import-file
+ *  - POST /ld/points/import   (alias za frontend)
+ */
+async function importPointsFromBase64(req, res) {
   try {
     const ldId = String(req.user?.ldId || "").trim();
     if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
@@ -555,7 +559,13 @@ router.post("/points/import-file", requireAuth, requireSuper, async (req, res) =
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
   }
-});
+}
+
+// ✅ original endpoint
+router.post("/points/import-file", requireAuth, requireSuper, importPointsFromBase64);
+
+// ✅ alias endpoint (točno to je manjkalo in je povzročalo 404)
+router.post("/points/import", requireAuth, requireSuper, importPointsFromBase64);
 
 /* ================= ODVZEM: IMPORT PLAN + VIEW ================= */
 
