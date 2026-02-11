@@ -245,6 +245,48 @@ router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
   }
 });
 
+// ✅ NEW: Staff: odstrani uporabnika (delete hunter)
+router.delete("/users/:code", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const code = String(req.params.code || "").trim();
+
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!code) return res.status(400).json({ error: "Missing code" });
+
+    // varovalka: ne dovoli brisati samega sebe (če token vsebuje code ali uid)
+    const myCode = String(req.user?.code || "").trim();
+    const myUid = String(req.user?.uid || "").trim();
+    if ((myCode && myCode === code) || (myUid && myUid === code)) {
+      return res.status(400).json({ error: "Cannot delete yourself." });
+    }
+
+    const ref = admin.firestore().collection("hunters").doc(code);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: "User not found" });
+
+    const data = snap.data() || {};
+    const targetLdId = String(data.ldId || "").trim();
+    const targetRole = String(data.role || "member");
+
+    // moderator: samo svoj LD
+    if (!isSuper(req) && targetLdId !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    // moderator: ne sme brisati super uporabnika
+    if (!isSuper(req) && targetRole === "super") {
+      return res.status(403).json({ error: "Forbidden (cannot delete super)" });
+    }
+
+    await ref.delete();
+
+    return res.json({ ok: true, deleted: code });
+  } catch (e) {
+    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+  }
+});
+
 // Staff: reset PIN (vrne nov pin)
 router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res) => {
   try {
