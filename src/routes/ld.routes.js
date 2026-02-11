@@ -460,25 +460,36 @@ async function importPointsFromBase64(req, res) {
     const db = admin.firestore();
     const col = db.collection("ld_points");
 
-    const BATCH_LIMIT = 450; // safe under 500
+    const BATCH_LIMIT = 450;
     let batch = db.batch();
     let ops = 0;
 
     let processed = 0;
     let skipped = 0;
 
-    // dedupe inside file
     const seen = new Set();
 
     for (const r of normalizedRows) {
-      // expected keys from template:
-      // ldid, ldime, type, name, lat, lng, notes, status, source, pointid
-
       const rowLdId = safeStr(r.ldid);
       const pointId = safeStr(r.pointid);
+      const name = safeStr(r.name);
 
-      // ignore empty/instruction rows
-      if (!rowLdId && !pointId && !safeStr(r.name)) {
+      const latRaw = safeStr(r.lat);
+      const lngRaw = safeStr(r.lng);
+
+      // 🔥 IGNORE TEMPLATE / NAVODILNE VRSTICE
+      if (
+        rowLdId.toLowerCase().includes("id lovi") ||
+        latRaw.toLowerCase().includes("latitude") ||
+        lngRaw.toLowerCase().includes("longitude") ||
+        pointId.toLowerCase().includes("interni")
+      ) {
+        skipped++;
+        continue;
+      }
+
+      // skip empty rows
+      if (!rowLdId && !pointId && !name) {
         skipped++;
         continue;
       }
@@ -488,7 +499,7 @@ async function importPointsFromBase64(req, res) {
         continue;
       }
 
-      // file must match selected LD (super uses switch-ld)
+      // LD mismatch zaščita
       if (rowLdId !== ldId) {
         return res.status(400).json({
           error: `LD mismatch: file row ldId="${rowLdId}", token ldId="${ldId}". (Najprej switch-ld na pravo LD)`,
@@ -496,7 +507,8 @@ async function importPointsFromBase64(req, res) {
       }
 
       if (!pointId) {
-        return res.status(400).json({ error: "Missing pointId on some row (pointId je obvezen)" });
+        skipped++;
+        continue;
       }
 
       const docId = safeDocId(`${ldId}__${pointId}`);
@@ -513,6 +525,7 @@ async function importPointsFromBase64(req, res) {
 
       const lat = parseLatLng(r.lat);
       const lng = parseLatLng(r.lng);
+
       if (lat == null || lng == null) {
         skipped++;
         continue;
@@ -525,7 +538,7 @@ async function importPointsFromBase64(req, res) {
         ldId,
         ldName: safeStr(r.ldime) || "",
         type: safeStr(r.type) || "",
-        name: safeStr(r.name) || "",
+        name: name || "",
         lat,
         lng,
         notes: safeStr(r.notes) || "",
@@ -534,8 +547,8 @@ async function importPointsFromBase64(req, res) {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
-      // merge=true => isti docId samo posodobi (anti-duplicate)
       batch.set(ref, data, { merge: true });
+
       ops++;
       processed++;
 
@@ -554,12 +567,16 @@ async function importPointsFromBase64(req, res) {
       ldId,
       processed,
       skipped,
-      message: "Import OK (dedupe by ldId__pointId, merge=true).",
+      message: "Import OK (robusten način, template vrstice ignorirane).",
     });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
   }
 }
+
 
 // ✅ original endpoint
 router.post("/points/import-file", requireAuth, requireSuper, importPointsFromBase64);
