@@ -36,7 +36,8 @@ const corsOptions = {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
     if (allowList.length === 0) return cb(null, true);
-    if (allowList.includes(origin)) return cb(null, origin);
+    if (allowList.includes(origin)) return cb(null, true);
+
     return cb(new Error(`CORS blocked: ${origin}`), false);
   },
   credentials: true,
