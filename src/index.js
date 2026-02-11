@@ -34,8 +34,13 @@ const allowList = String(process.env.CORS_ORIGIN || "")
 
 const corsOptions = {
   origin: (origin, cb) => {
+    // requests without Origin (curl / server-to-server)
     if (!origin) return cb(null, true);
+
+    // if allowList empty -> allow all (dev fallback)
     if (allowList.length === 0) return cb(null, true);
+
+    // allow only exact matches
     if (allowList.includes(origin)) return cb(null, true);
 
     return cb(new Error(`CORS blocked: ${origin}`), false);
@@ -43,10 +48,21 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+
+// ✅ DEBUG: preveri kaj Render dejansko vidi kot allowList/env
+app.get("/debug/cors", (req, res) => {
+  res.json({
+    ok: true,
+    requestOrigin: req.headers.origin || null,
+    cors_origin_env: process.env.CORS_ORIGIN || null,
+    allowList,
+  });
+});
 
 // ✅ bigger limit because file base64 upload
 app.use(express.json({ limit: "10mb" }));
