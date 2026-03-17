@@ -6,11 +6,8 @@ const path = require("path");
 function initFirebase() {
   if (admin.apps.length) return admin;
 
-  // 🔥 Bucket (Firebase Storage)
-  // Nastavi v env: FIREBASE_STORAGE_BUCKET = "tvoj-projekt.appspot.com"
   const storageBucket = (process.env.FIREBASE_STORAGE_BUCKET || "").trim() || undefined;
 
-  // Render/production: JSON v env
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (json && json.trim()) {
     const serviceAccount = JSON.parse(json);
@@ -21,7 +18,6 @@ function initFirebase() {
     return admin;
   }
 
-  // Lokalno: pot do datoteke
   const p = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!p) {
     throw new Error(

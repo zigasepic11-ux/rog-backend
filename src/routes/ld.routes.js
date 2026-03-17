@@ -1,9 +1,9 @@
 // src/routes/ld.routes.js
 const express = require("express");
 const bcrypt = require("bcrypt");
-const XLSX = require("xlsx"); // npm i xlsx
-const ExcelJS = require("exceljs"); // npm i exceljs
-const PDFDocument = require("pdfkit"); // npm i pdfkit
+const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
+const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
 
@@ -14,16 +14,37 @@ const router = express.Router();
 
 /* ================= HELPERS ================= */
 
+const VALID_ROLES = ["member", "moderator", "admin", "super"];
+const STAFF_ROLES = ["moderator", "admin", "super"];
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_EVENT_ATTACHMENTS = 20;
+
+const ALLOWED_ATTACHMENT_MIME = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
+const ALLOWED_ATTACHMENT_EXT = new Set([
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+]);
+
 function isSuper(req) {
   const r = String(req.user?.role || "");
-  // ✅ admin šteje kot super
   return r === "super" || r === "admin";
 }
 
 function isStaff(req) {
   const role = String(req.user?.role || "member");
-  // ✅ admin šteje kot staff
-  return role === "super" || role === "admin" || role === "moderator";
+  return STAFF_ROLES.includes(role);
 }
 
 function requireStaff(req, res, next) {
@@ -34,6 +55,22 @@ function requireStaff(req, res, next) {
 function requireSuper(req, res, next) {
   if (isSuper(req)) return next();
   return res.status(403).json({ error: "Forbidden (super only)" });
+}
+
+function canAssignRole(req, newRole) {
+  const role = String(newRole || "").trim();
+  if (!VALID_ROLES.includes(role)) return false;
+  if (isSuper(req)) return true;
+  // moderator lahko ustvarja/ureja samo memberje
+  return role === "member";
+}
+
+function canManageTargetRole(req, targetRole) {
+  const role = String(targetRole || "member").trim();
+  if (!VALID_ROLES.includes(role)) return false;
+  if (isSuper(req)) return true;
+  // moderator lahko upravlja samo memberje
+  return role === "member";
 }
 
 function genPin4() {
@@ -77,6 +114,70 @@ function pct(n, d) {
   return `${Math.round((nn / dd) * 100)}%`;
 }
 
+function getExt(filename) {
+  return path.extname(String(filename || "")).toLowerCase();
+}
+
+function sanitizeFileName(filename) {
+  const base = path.basename(String(filename || "")).replace(/[^a-zA-Z0-9._-]/g, "_");
+  return base.replace(/_+/g, "_").replace(/^_+|_+$/g, "") || "file";
+}
+
+function estimateBase64Bytes(b64) {
+  const s = String(b64 || "").replace(/\s+/g, "");
+  if (!s) return 0;
+  const padding = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  return Math.floor((s.length * 3) / 4) - padding;
+}
+
+function assertBase64UnderLimit(b64, maxBytes, label = "File") {
+  const bytes = estimateBase64Bytes(b64);
+  if (bytes <= 0) {
+    const err = new Error(`${label} is empty`);
+    err.status = 400;
+    throw err;
+  }
+  if (bytes > maxBytes) {
+    const err = new Error(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
+    err.status = 400;
+    throw err;
+  }
+}
+
+function assertAllowedAttachment(filename, mime) {
+  const safeName = sanitizeFileName(filename);
+  const ext = getExt(safeName);
+  const mm = String(mime || "").trim().toLowerCase();
+
+  if (!ALLOWED_ATTACHMENT_EXT.has(ext)) {
+    const err = new Error("Unsupported file extension");
+    err.status = 400;
+    throw err;
+  }
+
+  if (!ALLOWED_ATTACHMENT_MIME.has(mm)) {
+    const err = new Error("Unsupported file type");
+    err.status = 400;
+    throw err;
+  }
+
+  const matrix = {
+    ".pdf": ["application/pdf"],
+    ".doc": ["application/msword"],
+    ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ".xls": ["application/vnd.ms-excel"],
+    ".xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  };
+
+  if (!matrix[ext] || !matrix[ext].includes(mm)) {
+    const err = new Error("Filename extension and MIME type do not match");
+    err.status = 400;
+    throw err;
+  }
+
+  return { safeName, ext, mime: mm };
+}
+
 /** Pretvori excel row v normaliziran key (da se ujema z app harvestItems.key) */
 function makeKey(species, cls) {
   const clean = (s) =>
@@ -110,7 +211,6 @@ const ROG = {
 };
 
 function getPdfFontsOrThrow() {
-  // src/routes -> src/assets/fonts
   const fontReg = path.join(__dirname, "..", "assets", "fonts", "DejaVuSans.ttf");
   const fontBold = path.join(__dirname, "..", "assets", "fonts", "DejaVuSans-Bold.ttf");
 
@@ -262,9 +362,6 @@ function buildDisplayRows(viewRows) {
 
 /* ================= ODVZEM: OVERRIDES (manual corrections) ================= */
 
-// overrides: odvzem_plans/{ldId}_{year}/overrides/{key}
-// doc: { key, executedDelta, reason, updatedBy, updatedAt, createdAt }
-
 async function loadOdvzemOverridesMap(ldId, year) {
   const planId = `${ldId}_${year}`;
   const snap = await admin
@@ -274,7 +371,7 @@ async function loadOdvzemOverridesMap(ldId, year) {
     .collection("overrides")
     .get();
 
-  const map = {}; // key -> { executedDelta, reason, updatedAt, updatedBy }
+  const map = {};
   for (const d of snap.docs) {
     const x = d.data() || {};
     const key = safeStr(x.key) || d.id;
@@ -289,7 +386,6 @@ async function loadOdvzemOverridesMap(ldId, year) {
   return map;
 }
 
-// auto executed for a single key (used when setting manual executed)
 async function computeAutoExecutedForKey(ldId, year, key) {
   const start = admin.firestore.Timestamp.fromDate(new Date(year, 0, 1, 0, 0, 0));
   const end = admin.firestore.Timestamp.fromDate(new Date(year + 1, 0, 1, 0, 0, 0));
@@ -362,7 +458,6 @@ async function loadOdvzemViewRows(ldId, year) {
     }
   }
 
-  // ✅ manual overrides
   const overrides = await loadOdvzemOverridesMap(ldId, year);
 
   const rows = items.map((it) => {
@@ -501,11 +596,11 @@ router.post("/users", requireAuth, requireStaff, async (req, res) => {
 
     if (!code) return res.status(400).json({ error: "Missing code" });
     if (!name) return res.status(400).json({ error: "Missing name" });
-    if (!["member", "moderator", "super", "admin"].includes(role))
-      return res.status(400).json({ error: "Invalid role" });
+    if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: "Invalid role" });
 
-    if (!isSuper(req) && (role === "super" || role === "admin"))
-      return res.status(403).json({ error: "Forbidden (cannot create super/admin)" });
+    if (!canAssignRole(req, role)) {
+      return res.status(403).json({ error: "Forbidden (cannot create this role)" });
+    }
 
     const ref = admin.firestore().collection("hunters").doc(code);
     const existing = await ref.get();
@@ -549,20 +644,29 @@ router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
+    const targetRole = String(data.role || "member").trim();
+
     if (!isSuper(req) && String(data.ldId || "") !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
+    if (!canManageTargetRole(req, targetRole)) {
+      return res.status(403).json({ error: "Forbidden (cannot manage this user)" });
+    }
+
     const patch = {};
+
     if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
     if (req.body?.name != null) patch.name = String(req.body.name).trim();
 
     if (req.body?.role != null) {
       const r = String(req.body.role).trim();
-      if (!["member", "moderator", "super", "admin"].includes(r))
+      if (!VALID_ROLES.includes(r)) {
         return res.status(400).json({ error: "Invalid role" });
-      if (!isSuper(req) && (r === "super" || r === "admin"))
-        return res.status(403).json({ error: "Forbidden (cannot set super/admin)" });
+      }
+      if (!canAssignRole(req, r)) {
+        return res.status(403).json({ error: "Forbidden (cannot set this role)" });
+      }
       patch.role = r;
     }
 
@@ -591,8 +695,14 @@ router.delete("/users/:code", requireAuth, requireStaff, async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
+    const targetRole = String(data.role || "member").trim();
+
     if (!isSuper(req) && String(data.ldId || "") !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    if (!canManageTargetRole(req, targetRole)) {
+      return res.status(403).json({ error: "Forbidden (cannot delete this user)" });
     }
 
     await ref.delete();
@@ -617,8 +727,14 @@ router.post("/users/:code/reset-pin", requireAuth, requireStaff, async (req, res
     if (!snap.exists) return res.status(404).json({ error: "User not found" });
 
     const data = snap.data() || {};
+    const targetRole = String(data.role || "member").trim();
+
     if (!isSuper(req) && String(data.ldId || "") !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    if (!canManageTargetRole(req, targetRole)) {
+      return res.status(403).json({ error: "Forbidden (cannot reset PIN for this user)" });
     }
 
     const newPin = genPin4();
@@ -782,6 +898,8 @@ async function importPointsFromBase64(req, res) {
     const b64 = safeStr(req.body?.contentBase64);
     if (!b64) return res.status(400).json({ error: "Missing contentBase64" });
 
+    assertBase64UnderLimit(b64, MAX_IMPORT_BYTES, "Import file");
+
     const buf = Buffer.from(b64, "base64");
 
     const wb = XLSX.read(buf, { type: "buffer" });
@@ -821,7 +939,6 @@ async function importPointsFromBase64(req, res) {
       const latRaw = safeStr(r.lat);
       const lngRaw = safeStr(r.lng);
 
-      // ignore template header rows
       if (
         rowLdId.toLowerCase().includes("id lovi") ||
         latRaw.toLowerCase().includes("latitude") ||
@@ -912,9 +1029,9 @@ async function importPointsFromBase64(req, res) {
       message: "Import OK (robusten način, template vrstice ignorirane).",
     });
   } catch (e) {
-    return res.status(500).json({
-      error: "Server error",
-      detail: String(e?.stack || e?.message || e),
+    return res.status(e?.status || 500).json({
+      error: e?.status ? e.message : "Server error",
+      detail: e?.status ? undefined : String(e?.stack || e?.message || e),
     });
   }
 }
@@ -934,6 +1051,8 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
 
     const b64 = safeStr(req.body?.contentBase64);
     if (!b64) return res.status(400).json({ error: "Missing contentBase64" });
+
+    assertBase64UnderLimit(b64, MAX_IMPORT_BYTES, "Excel file");
 
     const buf = Buffer.from(b64, "base64");
 
@@ -1007,7 +1126,10 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
 
     return res.json({ ok: true, imported: items.length });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+    return res.status(e?.status || 500).json({
+      error: e?.status ? e.message : "Server error",
+      detail: e?.status ? undefined : String(e?.stack || e?.message || e),
+    });
   }
 });
 
@@ -1039,8 +1161,6 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
 
 /* ================= ODVZEM: MANUAL OVERRIDES (STAFF) ================= */
 
-// PATCH /ld/odvzem/override?year=2026&key=...
-// body: { executed:number, reason? } OR { delta:number, reason? }
 router.patch("/odvzem/override", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -1525,7 +1645,7 @@ router.get("/hunt-logs/export-pdf", requireAuth, async (req, res) => {
 
     const from = String(req.query?.from || "").trim();
     const to = String(req.query?.to || "").trim();
-    const filter = String(req.query?.filter || "all").trim(); // all | harvest | noharvest
+    const filter = String(req.query?.filter || "all").trim();
     const limit = Math.min(Number(req.query?.limit || 2000), 2000);
 
     const fromTs = from ? tsFromQuery(from) : null;
@@ -1810,12 +1930,11 @@ router.get("/hunt-logs/export-csv", requireAuth, async (req, res) => {
     startsAt: Timestamp,
     location,
     description,
-    attachments: [{ filename, mime, path, url, uploadedAt, uploadedBy }],
+    attachments: [{ attachmentId, filename, mime, path, url, uploadedAt, uploadedBy }],
     createdAt, updatedAt, createdBy
   }
 */
 
-// ✅ brez composite index: query only by ldId, nato sort/filter v JS
 router.get("/events", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -1832,7 +1951,6 @@ router.get("/events", requireAuth, async (req, res) => {
     if (fromRaw && (!fromD || Number.isNaN(fromD.getTime()))) return res.status(400).json({ error: "Invalid from" });
     if (toRaw && (!toD || Number.isNaN(toD.getTime()))) return res.status(400).json({ error: "Invalid to" });
 
-    // ✅ samo where(ldId==) -> ne rabi composite index
     const snap = await admin
       .firestore()
       .collection("ld_events")
@@ -1843,6 +1961,8 @@ router.get("/events", requireAuth, async (req, res) => {
     let events = snap.docs.map((d) => {
       const x = d.data() || {};
       const startsAtIso = x.startsAt?.toDate ? x.startsAt.toDate().toISOString() : null;
+      const attachments = Array.isArray(x.attachments) ? x.attachments : [];
+
       return {
         id: d.id,
         ldId: x.ldId || "",
@@ -1850,13 +1970,20 @@ router.get("/events", requireAuth, async (req, res) => {
         startsAt: startsAtIso,
         location: x.location || "",
         description: x.description || "",
-        attachments: Array.isArray(x.attachments) ? x.attachments : [],
+        attachments: attachments.map((a) => ({
+          attachmentId: a.attachmentId || null,
+          filename: a.filename || "",
+          mime: a.mime || "",
+          path: a.path || "",
+          url: a.url || null,
+          uploadedAt: toIsoMaybe(a.uploadedAt),
+          uploadedBy: a.uploadedBy || "",
+        })),
         createdAt: toIsoMaybe(x.createdAt),
         updatedAt: toIsoMaybe(x.updatedAt),
       };
     });
 
-    // sort po startsAt (asc)
     events.sort((a, b) => {
       const ta = a.startsAt ? new Date(a.startsAt).getTime() : 0;
       const tb = b.startsAt ? new Date(b.startsAt).getTime() : 0;
@@ -1889,7 +2016,6 @@ router.get("/events", requireAuth, async (req, res) => {
   }
 });
 
-// ✅ create event returns {id}
 router.post("/events", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -1941,6 +2067,17 @@ router.delete("/events/:id", requireAuth, requireStaff, async (req, res) => {
 
     const ev = snap.data() || {};
     if (!isSuper(req) && String(ev.ldId || "") !== ldId) return res.status(403).json({ error: "Forbidden (other LD)" });
+
+    const attachments = Array.isArray(ev.attachments) ? ev.attachments : [];
+    const bucket = admin.storage().bucket();
+
+    for (const a of attachments) {
+      if (a?.path) {
+        try {
+          await bucket.file(a.path).delete();
+        } catch {}
+      }
+    }
 
     await ref.delete();
     return res.json({ ok: true, id, deleted: true });
@@ -2004,7 +2141,6 @@ function parseEventsFromCsv(text) {
 
     let d = new Date(startsRaw);
 
-    // ✅ dd.mm.yyyy hh:mm
     if (Number.isNaN(d.getTime())) {
       const m = startsRaw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$/);
       if (m) {
@@ -2049,7 +2185,7 @@ function parseEventsFromJson(text) {
 }
 
 /* ================= EVENTS: IMPORT (STAFF) ================= */
-// POST /ld/events/import  body: { filename, contentBase64 } (.csv/.json)
+
 router.post("/events/import", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2058,6 +2194,8 @@ router.post("/events/import", requireAuth, requireStaff, async (req, res) => {
     const filename = safeStr(req.body?.filename) || "events.csv";
     const b64 = safeStr(req.body?.contentBase64);
     if (!b64) return res.status(400).json({ error: "Missing contentBase64" });
+
+    assertBase64UnderLimit(b64, MAX_IMPORT_BYTES, "Import file");
 
     const buf = Buffer.from(b64, "base64");
     const text = buf.toString("utf8");
@@ -2111,12 +2249,15 @@ router.post("/events/import", requireAuth, requireStaff, async (req, res) => {
 
     return res.json({ ok: true, filename, created });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+    return res.status(e?.status || 500).json({
+      error: e?.status ? e.message : "Server error",
+      detail: e?.status ? undefined : String(e?.stack || e?.message || e),
+    });
   }
 });
 
-/* ================= EVENTS: ATTACHMENTS (PDF/DOCX...) ================= */
-// POST /ld/events/:id/attachment  body: { filename, mime, contentBase64 }
+/* ================= EVENTS: ATTACHMENTS ================= */
+
 router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2126,10 +2267,11 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
     if (!id) return res.status(400).json({ error: "Missing event id" });
 
     const filename = safeStr(req.body?.filename);
-    const mime = safeStr(req.body?.mime) || "application/octet-stream";
+    const mime = safeStr(req.body?.mime);
     const b64 = safeStr(req.body?.contentBase64);
 
     if (!filename) return res.status(400).json({ error: "Missing filename" });
+    if (!mime) return res.status(400).json({ error: "Missing mime" });
     if (!b64) return res.status(400).json({ error: "Missing contentBase64" });
 
     const evRef = admin.firestore().collection("ld_events").doc(id);
@@ -2141,31 +2283,41 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
-    // ✅ requires FIREBASE_STORAGE_BUCKET in env + initFirebase storageBucket
-    const bucket = admin.storage().bucket();
+    const currentAttachments = Array.isArray(ev.attachments) ? ev.attachments : [];
+    if (currentAttachments.length >= MAX_EVENT_ATTACHMENTS) {
+      return res.status(400).json({ error: `Too many attachments (max ${MAX_EVENT_ATTACHMENTS})` });
+    }
 
-    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const objectPath = `ld_events/${ldId}/${id}/${Date.now()}_${safeName}`;
+    assertBase64UnderLimit(b64, MAX_ATTACHMENT_BYTES, "Attachment");
+    const { safeName, mime: safeMime } = assertAllowedAttachment(filename, mime);
+
+    const bucket = admin.storage().bucket();
+    const attachmentId = admin.firestore().collection("_").doc().id;
+    const objectPath = `ld_events/${ldId}/${id}/${attachmentId}_${safeName}`;
 
     const buf = Buffer.from(b64, "base64");
     const file = bucket.file(objectPath);
 
     await file.save(buf, {
-      metadata: { contentType: mime },
+      metadata: {
+        contentType: safeMime,
+        metadata: {
+          uploadedBy: String(req.user?.uid || req.user?.code || ""),
+          ldId,
+          eventId: id,
+          attachmentId,
+        },
+      },
       resumable: false,
-    });
-
-    const [url] = await file.getSignedUrl({
-      action: "read",
-      expires: "2099-01-01",
+      validation: "crc32c",
     });
 
     const attachment = {
+      attachmentId,
       filename: safeName,
-      mime,
+      mime: safeMime,
       path: objectPath,
-      url,
-      // ✅ Firestore NE dovoli serverTimestamp() v array elementu
+      url: `/ld/events/${id}/attachments/${attachmentId}/download`,
       uploadedAt: admin.firestore.Timestamp.now(),
       uploadedBy: String(req.user?.uid || req.user?.code || ""),
     };
@@ -2178,9 +2330,78 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
       { merge: true }
     );
 
-    return res.json({ ok: true, id, attachment: { filename: safeName, mime, url } });
+    return res.json({
+      ok: true,
+      id,
+      attachment: {
+        attachmentId,
+        filename: safeName,
+        mime: safeMime,
+        url: attachment.url,
+      },
+    });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+    return res.status(e?.status || 500).json({
+      error: e?.status ? e.message : "Server error",
+      detail: e?.status ? undefined : String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+// GET /ld/events/:id/attachments/:attachmentId/download
+router.get("/events/:id/attachments/:attachmentId/download", requireAuth, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const id = String(req.params.id || "").trim();
+    const attachmentId = String(req.params.attachmentId || "").trim();
+
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!id) return res.status(400).json({ error: "Missing event id" });
+    if (!attachmentId) return res.status(400).json({ error: "Missing attachmentId" });
+
+    const evRef = admin.firestore().collection("ld_events").doc(id);
+    const evSnap = await evRef.get();
+    if (!evSnap.exists) return res.status(404).json({ error: "Event not found" });
+
+    const ev = evSnap.data() || {};
+    if (!isSuper(req) && String(ev.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    const attachments = Array.isArray(ev.attachments) ? ev.attachments : [];
+    const att = attachments.find((a) => String(a?.attachmentId || "") === attachmentId);
+
+    if (!att || !att.path) {
+      return res.status(404).json({ error: "Attachment not found" });
+    }
+
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(att.path);
+
+    const [exists] = await file.exists();
+    if (!exists) {
+      return res.status(404).json({ error: "Attachment file not found in storage" });
+    }
+
+    res.setHeader("Content-Type", att.mime || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${sanitizeFileName(att.filename || "file")}"`);
+
+    file.createReadStream()
+      .on("error", (err) => {
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to stream file", detail: String(err?.message || err) });
+        } else {
+          try {
+            res.end();
+          } catch {}
+        }
+      })
+      .pipe(res);
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
   }
 });
 

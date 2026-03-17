@@ -1,6 +1,7 @@
+// src/ld.js
 const express = require("express");
-const { admin } = require("../firebase");
-const { requireAuth } = require("../auth");
+const { admin } = require("./firebase");
+const { requireAuth } = require("./auth");
 
 const router = express.Router();
 
@@ -10,7 +11,6 @@ router.get("/dashboard", requireAuth, async (req, res) => {
     const { ldId } = req.user || {};
     if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
 
-    // 1) LD info (če imaš kolekcijo 'lds')
     let ldName = ldId;
     try {
       const ldSnap = await admin.firestore().collection("lds").doc(ldId).get();
@@ -18,11 +18,8 @@ router.get("/dashboard", requireAuth, async (req, res) => {
         const ldData = ldSnap.data() || {};
         ldName = ldData.name || ldData.title || ldId;
       }
-    } catch (_) {
-      // če kolekcije lds še nimaš, ignoriramo
-    }
+    } catch (_) {}
 
-    // 2) št. uporabnikov v LD
     const huntersSnap = await admin
       .firestore()
       .collection("hunters")
@@ -31,19 +28,17 @@ router.get("/dashboard", requireAuth, async (req, res) => {
 
     const usersCount = huntersSnap.size;
 
-    // 3) dnevniki v tem mesecu (če kolekcije še nimaš, bo 0)
     let huntsThisMonth = 0;
     try {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startTs = admin.firestore.Timestamp.fromDate(start);
 
-      // Če boš imel hunt_logs in polje createdAt kot Firestore Timestamp,
-      // potem raje shrani Timestamp in tukaj uporabi start (Date).
       const logsSnap = await admin
         .firestore()
         .collection("hunt_logs")
         .where("ldId", "==", ldId)
-        .where("createdAt", ">=", start.toISOString())
+        .where("createdAt", ">=", startTs)
         .get();
 
       huntsThisMonth = logsSnap.size;
@@ -60,7 +55,10 @@ router.get("/dashboard", requireAuth, async (req, res) => {
       lastSync: new Date().toISOString(),
     });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
   }
 });
 
