@@ -34,15 +34,9 @@ const allowList = String(process.env.CORS_ORIGIN || "")
 
 const corsOptions = {
   origin: (origin, cb) => {
-    // requests without Origin (curl / server-to-server)
     if (!origin) return cb(null, true);
-
-    // if allowList empty -> allow all (dev fallback)
     if (allowList.length === 0) return cb(null, true);
-
-    // allow only exact matches
     if (allowList.includes(origin)) return cb(null, true);
-
     return cb(new Error(`CORS blocked: ${origin}`), false);
   },
   credentials: true,
@@ -54,7 +48,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-// ✅ DEBUG: preveri kaj Render dejansko vidi kot allowList/env
+// ✅ DEBUG
 app.get("/debug/cors", (req, res) => {
   res.json({
     ok: true,
@@ -110,6 +104,8 @@ function loadRoute(modulePath) {
 
 const authLoad = loadRoute("./routes/auth.routes");
 const ldLoad = loadRoute("./routes/ld.routes");
+const workHoursLoad = loadRoute("./routes/workhours.routes");
+const documentsLoad = loadRoute("./routes/documents.routes");
 
 if (authLoad.ok) app.use("/auth", authLoad.router);
 else console.error("❌ FAILED loading ./routes/auth.routes\n", authLoad.error);
@@ -117,13 +113,23 @@ else console.error("❌ FAILED loading ./routes/auth.routes\n", authLoad.error);
 if (ldLoad.ok) app.use("/ld", ldLoad.router);
 else console.error("❌ FAILED loading ./routes/ld.routes\n", ldLoad.error);
 
+if (workHoursLoad.ok) app.use("/ld", workHoursLoad.router);
+else console.error("❌ FAILED loading ./routes/workhours.routes\n", workHoursLoad.error);
+
+if (documentsLoad.ok) app.use("/ld", documentsLoad.router);
+else console.error("❌ FAILED loading ./routes/documents.routes\n", documentsLoad.error);
+
 app.get("/debug/routes", (req, res) => {
   res.json({
     ok: true,
     authMounted: authLoad.ok,
     ldMounted: ldLoad.ok,
+    workHoursMounted: workHoursLoad.ok,
+    documentsMounted: documentsLoad.ok,
     authError: authLoad.ok ? null : authLoad.error,
     ldError: ldLoad.ok ? null : ldLoad.error,
+    workHoursError: workHoursLoad.ok ? null : workHoursLoad.error,
+    documentsError: documentsLoad.ok ? null : documentsLoad.error,
   });
 });
 

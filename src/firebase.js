@@ -13,7 +13,7 @@ function initFirebase() {
     const serviceAccount = JSON.parse(json);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+      ...(storageBucket ? { storageBucket } : {}),
     });
     return admin;
   }
