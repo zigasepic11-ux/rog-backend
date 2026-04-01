@@ -572,5 +572,118 @@ router.post("/work-actions/:id/entries", requireAuth, requireStaff, async (req, 
     });
   }
 });
+/* ================= MY HUNT STATS =================
+   GET /ld/hunt-stats/me?year=2026
 
+   OPOMBA:
+   Ta verzija predpostavlja kolekcijo "hunt_logs".
+   Če imaš drugo ime kolekcije ali drugačna polja,
+   bo treba to kasneje prilagoditi.
+*/
+router.get("/hunt-stats/me", requireAuth, async (req, res) => {
+  try {
+    const ldId = safeStr(req.user?.ldId);
+    const hunterId = safeStr(req.user?.code || req.user?.hunterId || req.user?.id);
+
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    if (!hunterId) {
+      return res.status(400).json({ error: "Missing hunter id in token." });
+    }
+
+    const year = Number(req.query?.year || currentYear());
+    if (!year || year < 2020 || year > 2100) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
+
+    const db = admin.firestore();
+
+    // TODO: Če imaš drugo kolekcijo kot "hunt_logs", zamenjaj tukaj.
+    const huntsSnap = await db
+      .collection("hunt_logs")
+      .where("ldId", "==", ldId)
+      .where("hunterId", "==", hunterId)
+      .get();
+
+    const hunts = huntsSnap.docs.map((d) => {
+      const x = d.data() || {};
+
+      const startedAt = x.startedAt?.toDate
+        ? x.startedAt.toDate().toISOString()
+        : (x.startedAt || null);
+
+      const endedAt = x.endedAt?.toDate
+        ? x.endedAt.toDate().toISOString()
+        : (x.endedAt || null);
+
+      const status = safeStr(x.status || "");
+      const hasCatch = x.hasCatch === true || x.successful === true;
+
+      return {
+        id: d.id,
+        startedAt,
+        endedAt,
+        status,
+        hasCatch,
+      };
+    });
+
+    const totalHunts = hunts.length;
+
+    const huntsThisYear = hunts.filter((h) => {
+      if (!h.startedAt) return false;
+      const d = new Date(h.startedAt);
+      return !Number.isNaN(d.getTime()) && d.getFullYear() === year;
+    });
+
+    const finishedThisYear = huntsThisYear.filter((h) => {
+      return h.status === "finished" || h.status === "closed" || !!h.endedAt;
+    });
+
+    const successfulThisYear = finishedThisYear.filter((h) => h.hasCatch);
+
+    const finishedHunts = finishedThisYear.length;
+    const successfulHunts = successfulThisYear.length;
+    const successRate =
+      finishedHunts > 0 ? (successfulHunts / finishedHunts) * 100 : 0;
+
+    const sortedByDate = [...huntsThisYear].sort((a, b) => {
+      const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      return tb - ta;
+    });
+
+    const lastHunt = sortedByDate[0] || null;
+
+    let lastHuntLabel = null;
+    if (lastHunt?.startedAt) {
+      try {
+        const d = new Date(lastHunt.startedAt);
+        lastHuntLabel = `Lov ${d.toLocaleDateString("sl-SI")}`;
+      } catch (_) {
+        lastHuntLabel = "Zadnji lov";
+      }
+    }
+
+    return res.json({
+      ok: true,
+      ldId,
+      year,
+      hunterId,
+      totalHunts,
+      huntsThisYear: huntsThisYear.length,
+      successfulHunts,
+      finishedHunts,
+      successRate: Number(successRate.toFixed(1)),
+      lastHuntLabel,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
 module.exports = router;
