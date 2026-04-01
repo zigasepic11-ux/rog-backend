@@ -149,6 +149,92 @@ router.get("/work-hours/overview", requireAuth, async (req, res) => {
     });
   }
 });
+/* ================= MY WORK HOURS =================
+   GET /ld/work-hours/me?year=2026
+*/
+router.get("/work-hours/me", requireAuth, async (req, res) => {
+  try {
+    const ldId = safeStr(req.user?.ldId);
+    const hunterId = safeStr(req.user?.code || req.user?.hunterId || req.user?.id);
+
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    if (!hunterId) {
+      return res.status(400).json({ error: "Missing hunter id in token." });
+    }
+
+    const year = Number(req.query?.year || currentYear());
+    if (!year || year < 2020 || year > 2100) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
+
+    const db = admin.firestore();
+
+    const hunterRef = db.collection("hunters").doc(hunterId);
+    const hunterSnap = await hunterRef.get();
+
+    if (!hunterSnap.exists) {
+      return res.status(404).json({ error: "Hunter not found" });
+    }
+
+    const hunter = hunterSnap.data() || {};
+
+    if (!isSuper(req) && safeStr(hunter.ldId) !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    const planSnap = await db
+      .collection("work_hour_plans")
+      .doc(planDocId(ldId, year))
+      .collection("members")
+      .doc(hunterId)
+      .get();
+
+    const plannedHours = planSnap.exists
+      ? (numOrNull(planSnap.data()?.plannedHours) ?? 0)
+      : 0;
+
+    const actionsSnap = await db
+      .collection("work_actions")
+      .where("ldId", "==", ldId)
+      .where("year", "==", year)
+      .get();
+
+    let doneHours = 0;
+
+    for (const actionDoc of actionsSnap.docs) {
+      const entrySnap = await actionDoc.ref.collection("entries").doc(hunterId).get();
+      if (!entrySnap.exists) continue;
+
+      const entry = entrySnap.data() || {};
+      doneHours += numOrNull(entry.hours) ?? 0;
+    }
+
+    const missingHours = Math.max(0, plannedHours - doneHours);
+    const extraHours = Math.max(0, doneHours - plannedHours);
+
+    return res.json({
+      ok: true,
+      ldId,
+      year,
+      hunterId,
+      hunterCode: hunterId,
+      name: safeStr(hunter.name),
+      role: safeStr(hunter.role || "member"),
+      plannedHours,
+      doneHours,
+      missingHours,
+      extraHours,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
 
 /* ================= PLAN SET =================
    POST /ld/work-hours/plan
