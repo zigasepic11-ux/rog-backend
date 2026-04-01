@@ -2404,5 +2404,115 @@ router.get("/events/:id/attachments/:attachmentId/download", requireAuth, async 
     });
   }
 });
+/* ================= MY HUNT STATS =================
+   GET /ld/hunt-stats/me?year=2026
+*/
+router.get("/hunt-stats/me", requireAuth, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const hunterId = String(req.user?.code || req.user?.hunterId || req.user?.id || "").trim();
 
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    if (!hunterId) {
+      return res.status(400).json({ error: "Missing hunterId in token." });
+    }
+
+    const year = Number(req.query?.year || new Date().getFullYear());
+    if (!year || year < 2020 || year > 2100) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
+
+    const start = admin.firestore.Timestamp.fromDate(
+      new Date(year, 0, 1, 0, 0, 0)
+    );
+    const end = admin.firestore.Timestamp.fromDate(
+      new Date(year + 1, 0, 1, 0, 0, 0)
+    );
+
+    const snap = await admin
+      .firestore()
+      .collection("hunt_logs")
+      .where("ldId", "==", ldId)
+      .where("hunterId", "==", hunterId)
+      .get();
+
+    const logs = snap.docs.map((d) => {
+      const x = d.data() || {};
+      return {
+        id: d.id,
+        hunterId: x.hunterId || "",
+        hunterName: x.hunterName || "",
+        startedAt: x.startedAt || null,
+        finishedAt: x.finishedAt || null,
+        harvest: x.harvest === true,
+        species: x.species || "",
+        notes: x.notes || "",
+        endedReason: x.endedReason || "",
+      };
+    });
+
+    const totalHunts = logs.length;
+
+    const huntsThisYear = logs.filter((log) => {
+      if (!log.startedAt?.toDate) return false;
+      const d = log.startedAt.toDate();
+      return d.getFullYear() === year;
+    });
+
+    const finishedThisYear = logs.filter((log) => {
+      if (!log.finishedAt?.toDate) return false;
+      const d = log.finishedAt.toDate();
+      return d >= start.toDate() && d < end.toDate();
+    });
+
+    const successfulThisYear = finishedThisYear.filter((log) => log.harvest);
+
+    const finishedHunts = finishedThisYear.length;
+    const successfulHunts = successfulThisYear.length;
+    const successRate =
+      finishedHunts > 0 ? (successfulHunts / finishedHunts) * 100 : 0;
+
+    const sortedFinished = [...finishedThisYear].sort((a, b) => {
+      const ta = a.finishedAt?.toDate ? a.finishedAt.toDate().getTime() : 0;
+      const tb = b.finishedAt?.toDate ? b.finishedAt.toDate().getTime() : 0;
+      return tb - ta;
+    });
+
+    const lastHunt = sortedFinished[0] || null;
+
+    let lastHuntLabel = null;
+    if (lastHunt?.finishedAt?.toDate) {
+      const d = lastHunt.finishedAt.toDate();
+      const dateStr = d.toLocaleDateString("sl-SI");
+      if (lastHunt.harvest) {
+        lastHuntLabel = lastHunt.species
+          ? `${lastHunt.species} - ${dateStr}`
+          : `Uspešen lov - ${dateStr}`;
+      } else {
+        lastHuntLabel = `Brez uplena - ${dateStr}`;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      ldId,
+      hunterId,
+      year,
+      totalHunts,
+      huntsThisYear: huntsThisYear.length,
+      successfulHunts,
+      finishedHunts,
+      successRate: Number(successRate.toFixed(1)),
+      lastHuntLabel,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
 module.exports = router;
