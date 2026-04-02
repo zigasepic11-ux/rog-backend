@@ -2515,4 +2515,243 @@ router.get("/hunt-stats/me", requireAuth, async (req, res) => {
     });
   }
 });
+/* ================= HUNTER ASSIGNMENTS: LIST =================
+   GET /ld/hunter-assignments
+*/
+router.get("/hunter-assignments", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    const snap = await admin
+      .firestore()
+      .collection("hunter_assignments")
+      .where("ldId", "==", ldId)
+      .get();
+
+    const assignments = snap.docs.map((d) => {
+      const x = d.data() || {};
+      return {
+        id: d.id,
+        hunterId: x.hunterId || "",
+        hunterName: x.hunterName || "",
+        title: x.title || "",
+        description: x.description || "",
+        location: x.location || "",
+        category: x.category || "",
+        status: x.status || "active",
+        createdAt: toIsoMaybe(x.createdAt),
+        updatedAt: toIsoMaybe(x.updatedAt),
+      };
+    });
+
+    assignments.sort((a, b) => {
+      const h = String(a.hunterName).localeCompare(String(b.hunterName), "sl");
+      if (h !== 0) return h;
+      return String(a.title).localeCompare(String(b.title), "sl");
+    });
+
+    return res.json({ ok: true, assignments });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+/* ================= HUNTER ASSIGNMENTS: ME =================
+   GET /ld/hunter-assignments/me
+*/
+router.get("/hunter-assignments/me", requireAuth, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const hunterId = String(req.user?.code || req.user?.hunterId || req.user?.id || "").trim();
+
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    if (!hunterId) {
+      return res.status(400).json({ error: "Missing hunterId in token." });
+    }
+
+    const snap = await admin
+      .firestore()
+      .collection("hunter_assignments")
+      .where("ldId", "==", ldId)
+      .where("hunterId", "==", hunterId)
+      .get();
+
+    const assignments = snap.docs
+      .map((d) => {
+        const x = d.data() || {};
+        return {
+          id: d.id,
+          title: x.title || "",
+          description: x.description || "",
+          location: x.location || "",
+          category: x.category || "",
+          status: x.status || "active",
+          createdAt: toIsoMaybe(x.createdAt),
+          updatedAt: toIsoMaybe(x.updatedAt),
+        };
+      })
+      .sort((a, b) => String(a.title).localeCompare(String(b.title), "sl"));
+
+    return res.json({
+      ok: true,
+      ldId,
+      hunterId,
+      assignments,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+/* ================= HUNTER ASSIGNMENTS: CREATE =================
+   POST /ld/hunter-assignments
+*/
+router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    const hunterId = safeStr(req.body?.hunterId);
+    const title = safeStr(req.body?.title);
+    const description = safeStr(req.body?.description);
+    const location = safeStr(req.body?.location);
+    const category = safeStr(req.body?.category);
+    const status = safeStr(req.body?.status || "active");
+
+    if (!hunterId) return res.status(400).json({ error: "Missing hunterId" });
+    if (!title) return res.status(400).json({ error: "Missing title" });
+
+    const hunterRef = admin.firestore().collection("hunters").doc(hunterId);
+    const hunterSnap = await hunterRef.get();
+
+    if (!hunterSnap.exists) {
+      return res.status(404).json({ error: "Hunter not found" });
+    }
+
+    const hunter = hunterSnap.data() || {};
+    if (!isSuper(req) && String(hunter.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    const ref = admin.firestore().collection("hunter_assignments").doc();
+
+    await ref.set({
+      ldId,
+      hunterId,
+      hunterName: safeStr(hunter.name),
+      title,
+      description,
+      location,
+      category,
+      status,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdBy: String(req.user?.uid || req.user?.code || ""),
+      updatedBy: String(req.user?.uid || req.user?.code || ""),
+    });
+
+    return res.json({
+      ok: true,
+      id: ref.id,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+/* ================= HUNTER ASSIGNMENTS: UPDATE =================
+   PATCH /ld/hunter-assignments/:id
+*/
+router.patch("/hunter-assignments/:id", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const id = String(req.params.id || "").trim();
+
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!id) return res.status(400).json({ error: "Missing id" });
+
+    const ref = admin.firestore().collection("hunter_assignments").doc(id);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    const data = snap.data() || {};
+    if (!isSuper(req) && String(data.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    const patch = {};
+
+    if (req.body?.title != null) patch.title = safeStr(req.body.title);
+    if (req.body?.description != null) patch.description = safeStr(req.body.description);
+    if (req.body?.location != null) patch.location = safeStr(req.body.location);
+    if (req.body?.category != null) patch.category = safeStr(req.body.category);
+    if (req.body?.status != null) patch.status = safeStr(req.body.status);
+
+    patch.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    patch.updatedBy = String(req.user?.uid || req.user?.code || "");
+
+    await ref.set(patch, { merge: true });
+
+    return res.json({ ok: true, id, patch });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+/* ================= HUNTER ASSIGNMENTS: DELETE =================
+   DELETE /ld/hunter-assignments/:id
+*/
+router.delete("/hunter-assignments/:id", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const id = String(req.params.id || "").trim();
+
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!id) return res.status(400).json({ error: "Missing id" });
+
+    const ref = admin.firestore().collection("hunter_assignments").doc(id);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    const data = snap.data() || {};
+    if (!isSuper(req) && String(data.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    await ref.delete();
+
+    return res.json({ ok: true, deleted: id });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
 module.exports = router;
