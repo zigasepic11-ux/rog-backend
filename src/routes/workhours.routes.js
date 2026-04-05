@@ -1,4 +1,3 @@
-// src/routes/workhours.routes.js
 const express = require("express");
 const { admin } = require("../firebase");
 const { requireAuth } = require("../auth");
@@ -149,6 +148,7 @@ router.get("/work-hours/overview", requireAuth, async (req, res) => {
     });
   }
 });
+
 /* ================= MY WORK HOURS =================
    GET /ld/work-hours/me?year=2026
 */
@@ -438,6 +438,62 @@ router.post("/work-actions", requireAuth, requireStaff, async (req, res) => {
   }
 });
 
+/* ================= UPDATE WORK ACTION STATUS =================
+   PATCH /ld/work-actions/:id/status
+   body: { status: "open" | "closed" }
+*/
+router.patch("/work-actions/:id/status", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = safeStr(req.user?.ldId);
+    const id = safeStr(req.params.id);
+    const status = safeStr(req.body?.status).toLowerCase();
+
+    if (!ldId) {
+      return res.status(400).json({ error: "Missing ldId in token." });
+    }
+
+    if (!id) {
+      return res.status(400).json({ error: "Missing action id" });
+    }
+
+    if (!["open", "closed"].includes(status)) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
+
+    const ref = admin.firestore().collection("work_actions").doc(id);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Action not found" });
+    }
+
+    const action = snap.data() || {};
+
+    if (!isSuper(req) && safeStr(action.ldId) !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    await ref.set(
+      {
+        status,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      ok: true,
+      id,
+      status,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
 /* ================= LIST ENTRIES FOR ACTION =================
    GET /ld/work-actions/:id/entries
 */
@@ -528,6 +584,10 @@ router.post("/work-actions/:id/entries", requireAuth, requireStaff, async (req, 
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
+    if (safeStr(action.status || "open") === "closed") {
+      return res.status(400).json({ error: "Akcija je zaključena in vnosi niso več možni." });
+    }
+
     const hunterRef = db.collection("hunters").doc(hunterId);
     const hunterSnap = await hunterRef.get();
 
@@ -572,13 +632,9 @@ router.post("/work-actions/:id/entries", requireAuth, requireStaff, async (req, 
     });
   }
 });
+
 /* ================= MY HUNT STATS =================
    GET /ld/hunt-stats/me?year=2026
-
-   OPOMBA:
-   Ta verzija predpostavlja kolekcijo "hunt_logs".
-   Če imaš drugo ime kolekcije ali drugačna polja,
-   bo treba to kasneje prilagoditi.
 */
 router.get("/hunt-stats/me", requireAuth, async (req, res) => {
   try {
@@ -600,7 +656,6 @@ router.get("/hunt-stats/me", requireAuth, async (req, res) => {
 
     const db = admin.firestore();
 
-    // TODO: Če imaš drugo kolekcijo kot "hunt_logs", zamenjaj tukaj.
     const huntsSnap = await db
       .collection("hunt_logs")
       .where("ldId", "==", ldId)
@@ -686,4 +741,5 @@ router.get("/hunt-stats/me", requireAuth, async (req, res) => {
     });
   }
 });
+
 module.exports = router;
