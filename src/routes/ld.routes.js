@@ -9,6 +9,7 @@ const path = require("path");
 
 const { admin } = require("../firebase");
 const { requireAuth } = require("../auth");
+const { sendToLd, sendToHunter } = require("../services/push.service");
 
 const router = express.Router();
 
@@ -2033,6 +2034,7 @@ router.post("/events", requireAuth, requireStaff, async (req, res) => {
     if (Number.isNaN(d.getTime())) return res.status(400).json({ error: "Invalid startsAt" });
 
     const ref = admin.firestore().collection("ld_events").doc();
+
     await ref.set(
       {
         ldId,
@@ -2048,9 +2050,91 @@ router.post("/events", requireAuth, requireStaff, async (req, res) => {
       { merge: true }
     );
 
+    try {
+      await sendToLd({
+        ldId,
+        title: "Nov dogodek",
+        body: `Dodan je bil nov dogodek: ${title}`,
+        data: {
+          type: "event_created",
+          ldId,
+          eventId: ref.id,
+        },
+      });
+    } catch (pushError) {
+      console.error("event_created push failed:", pushError);
+    }
+
     return res.json({ ok: true, id: ref.id });
   } catch (e) {
-    return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+router.patch("/events/:id", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    const id = String(req.params.id || "").trim();
+
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!id) return res.status(400).json({ error: "Missing id" });
+
+    const ref = admin.firestore().collection("ld_events").doc(id);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const data = snap.data() || {};
+    if (!isSuper(req) && String(data.ldId || "") !== ldId) {
+      return res.status(403).json({ error: "Forbidden (other LD)" });
+    }
+
+    const patch = {};
+
+    if (req.body?.title != null) patch.title = safeStr(req.body.title);
+    if (req.body?.location != null) patch.location = safeStr(req.body.location);
+    if (req.body?.description != null) patch.description = safeStr(req.body.description);
+
+    if (req.body?.startsAt != null) {
+      const d = new Date(String(req.body.startsAt));
+      if (Number.isNaN(d.getTime())) {
+        return res.status(400).json({ error: "Invalid startsAt" });
+      }
+      patch.startsAt = admin.firestore.Timestamp.fromDate(d);
+    }
+
+    patch.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    await ref.set(patch, { merge: true });
+
+    const mergedTitle = patch.title || data.title || "Dogodek";
+
+    try {
+      await sendToLd({
+        ldId,
+        title: "Sprememba dogodka",
+        body: `Dogodek "${mergedTitle}" je bil posodobljen.`,
+        data: {
+          type: "event_updated",
+          ldId,
+          eventId: id,
+        },
+      });
+    } catch (pushError) {
+      console.error("event_updated push failed:", pushError);
+    }
+
+    return res.json({ ok: true, id, patch });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
   }
 });
 
@@ -2404,9 +2488,11 @@ router.get("/events/:id/attachments/:attachmentId/download", requireAuth, async 
     });
   }
 });
+
 /* ================= MY HUNT STATS =================
    GET /ld/hunt-stats/me?year=2026
 */
+
 router.get("/hunt-stats/me", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2515,9 +2601,11 @@ router.get("/hunt-stats/me", requireAuth, async (req, res) => {
     });
   }
 });
+
 /* ================= HUNTER ASSIGNMENTS: LIST =================
    GET /ld/hunter-assignments
 */
+
 router.get("/hunter-assignments", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2565,6 +2653,7 @@ router.get("/hunter-assignments", requireAuth, requireStaff, async (req, res) =>
 /* ================= HUNTER ASSIGNMENTS: ME =================
    GET /ld/hunter-assignments/me
 */
+
 router.get("/hunter-assignments/me", requireAuth, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2618,6 +2707,7 @@ router.get("/hunter-assignments/me", requireAuth, async (req, res) => {
 /* ================= HUNTER ASSIGNMENTS: CREATE =================
    POST /ld/hunter-assignments
 */
+
 router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2664,6 +2754,21 @@ router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) =
       updatedBy: String(req.user?.uid || req.user?.code || ""),
     });
 
+    try {
+      await sendToHunter({
+        hunterId,
+        title: "Nova zadolžitev",
+        body: `Dodeljena ti je bila nova zadolžitev: ${title}`,
+        data: {
+          type: "assignment_created",
+          ldId,
+          assignmentId: ref.id,
+        },
+      });
+    } catch (pushError) {
+      console.error("assignment_created push failed:", pushError);
+    }
+
     return res.json({
       ok: true,
       id: ref.id,
@@ -2679,6 +2784,7 @@ router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) =
 /* ================= HUNTER ASSIGNMENTS: UPDATE =================
    PATCH /ld/hunter-assignments/:id
 */
+
 router.patch("/hunter-assignments/:id", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2724,6 +2830,7 @@ router.patch("/hunter-assignments/:id", requireAuth, requireStaff, async (req, r
 /* ================= HUNTER ASSIGNMENTS: DELETE =================
    DELETE /ld/hunter-assignments/:id
 */
+
 router.delete("/hunter-assignments/:id", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2754,4 +2861,5 @@ router.delete("/hunter-assignments/:id", requireAuth, requireStaff, async (req, 
     });
   }
 });
+
 module.exports = router;

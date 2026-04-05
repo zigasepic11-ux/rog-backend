@@ -1,4 +1,3 @@
-// src/index.js
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
@@ -8,13 +7,8 @@ initFirebase();
 
 const app = express();
 app.set("trust proxy", 1);
-
-// ✅ IMPORTANT: disable etag -> no more 304 Not Modified caching
 app.set("etag", false);
 
-// -----------------------------
-// ✅ VERSION marker (debug)
-// -----------------------------
 app.get("/__version", (req, res) => {
   res.json({
     ok: true,
@@ -24,9 +18,6 @@ app.get("/__version", (req, res) => {
   });
 });
 
-// -----------------------------
-// ✅ CORS (ENV origin, allow-list)
-// -----------------------------
 const allowList = String(process.env.CORS_ORIGIN || "")
   .split(",")
   .map((s) => s.trim())
@@ -48,7 +39,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-// ✅ DEBUG
 app.get("/debug/cors", (req, res) => {
   res.json({
     ok: true,
@@ -58,10 +48,8 @@ app.get("/debug/cors", (req, res) => {
   });
 });
 
-// ✅ bigger limit because file base64 upload
 app.use(express.json({ limit: "25mb" }));
 
-// ✅ IMPORTANT: disable caching everywhere for API
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
@@ -70,9 +58,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// -----------------------------
-// ✅ Logger
-// -----------------------------
 app.use((req, res, next) => {
   const t0 = Date.now();
   res.on("finish", () => {
@@ -82,14 +67,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// -----------------------------
-// ✅ Health
-// -----------------------------
 app.get("/health", (req, res) => res.json({ ok: true, marker: "ROG-BACKEND" }));
 
-// -----------------------------
-// ✅ Safe route loader
-// -----------------------------
 function loadRoute(modulePath) {
   try {
     const r = require(modulePath);
@@ -106,6 +85,7 @@ const authLoad = loadRoute("./routes/auth.routes");
 const ldLoad = loadRoute("./routes/ld.routes");
 const workHoursLoad = loadRoute("./routes/workhours.routes");
 const documentsLoad = loadRoute("./routes/documents.routes");
+const notificationsLoad = loadRoute("./routes/notifications.routes");
 
 if (authLoad.ok) app.use("/auth", authLoad.router);
 else console.error("❌ FAILED loading ./routes/auth.routes\n", authLoad.error);
@@ -119,6 +99,9 @@ else console.error("❌ FAILED loading ./routes/workhours.routes\n", workHoursLo
 if (documentsLoad.ok) app.use("/ld", documentsLoad.router);
 else console.error("❌ FAILED loading ./routes/documents.routes\n", documentsLoad.error);
 
+if (notificationsLoad.ok) app.use("/notifications", notificationsLoad.router);
+else console.error("❌ FAILED loading ./routes/notifications.routes\n", notificationsLoad.error);
+
 app.get("/debug/routes", (req, res) => {
   res.json({
     ok: true,
@@ -126,10 +109,12 @@ app.get("/debug/routes", (req, res) => {
     ldMounted: ldLoad.ok,
     workHoursMounted: workHoursLoad.ok,
     documentsMounted: documentsLoad.ok,
+    notificationsMounted: notificationsLoad.ok,
     authError: authLoad.ok ? null : authLoad.error,
     ldError: ldLoad.ok ? null : ldLoad.error,
     workHoursError: workHoursLoad.ok ? null : workHoursLoad.error,
     documentsError: documentsLoad.ok ? null : documentsLoad.error,
+    notificationsError: notificationsLoad.ok ? null : notificationsLoad.error,
   });
 });
 
