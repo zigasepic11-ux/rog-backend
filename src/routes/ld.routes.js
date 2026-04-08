@@ -62,7 +62,6 @@ function canAssignRole(req, newRole) {
   const role = String(newRole || "").trim();
   if (!VALID_ROLES.includes(role)) return false;
   if (isSuper(req)) return true;
-  // moderator lahko ustvarja/ureja samo memberje
   return role === "member";
 }
 
@@ -70,7 +69,6 @@ function canManageTargetRole(req, targetRole) {
   const role = String(targetRole || "member").trim();
   if (!VALID_ROLES.includes(role)) return false;
   if (isSuper(req)) return true;
-  // moderator lahko upravlja samo memberje
   return role === "member";
 }
 
@@ -80,6 +78,18 @@ function genPin4() {
 
 function safeStr(v) {
   return (v == null ? "" : String(v)).trim();
+}
+
+function resolveTargetLdId(req) {
+  const tokenLdId = String(req.user?.ldId || "").trim();
+  const bodyLdId = safeStr(req.body?.ldId);
+  const queryLdId = safeStr(req.query?.ldId);
+
+  if (isSuper(req)) {
+    return String(bodyLdId || queryLdId || tokenLdId || "").trim();
+  }
+
+  return tokenLdId;
 }
 
 function numOrNull(v) {
@@ -179,7 +189,6 @@ function assertAllowedAttachment(filename, mime) {
   return { safeName, ext, mime: mm };
 }
 
-/** Pretvori excel row v normaliziran key (da se ujema z app harvestItems.key) */
 function makeKey(species, cls) {
   const clean = (s) =>
     safeStr(s)
@@ -361,7 +370,7 @@ function buildDisplayRows(viewRows) {
   return out;
 }
 
-/* ================= ODVZEM: OVERRIDES (manual corrections) ================= */
+/* ================= ODVZEM: OVERRIDES ================= */
 
 async function loadOdvzemOverridesMap(ldId, year) {
   const planId = `${ldId}_${year}`;
@@ -412,7 +421,7 @@ async function computeAutoExecutedForKey(ldId, year, key) {
   return sum;
 }
 
-/* ================= ODVZEM: LOAD VIEW (auto + delta) ================= */
+/* ================= ODVZEM: LOAD VIEW ================= */
 
 async function loadOdvzemViewRows(ldId, year) {
   const planId = `${ldId}_${year}`;
@@ -477,7 +486,6 @@ async function loadOdvzemViewRows(ldId, year) {
       species: safeStr(it?.species),
       classLabel: safeStr(it?.classLabel),
       plan: planCount,
-
       executedAuto,
       executedDelta,
       executed,
@@ -488,7 +496,6 @@ async function loadOdvzemViewRows(ldId, year) {
             updatedAt: ov.updatedAt || null,
           }
         : null,
-
       pending,
       percent: pct(executed, planCount),
     };
@@ -554,7 +561,7 @@ router.get("/dashboard", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= USERS (hunters) ================= */
+/* ================= USERS ================= */
 
 router.get("/users", requireAuth, requireStaff, async (req, res) => {
   try {
@@ -839,7 +846,7 @@ router.get("/points", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= POINTS IMPORT (SUPER ONLY, anti-duplicate) ================= */
+/* ================= POINTS IMPORT ================= */
 
 function normalizeHeaderKey(k) {
   return String(k || "")
@@ -1040,7 +1047,7 @@ async function importPointsFromBase64(req, res) {
 router.post("/points/import-file", requireAuth, requireSuper, importPointsFromBase64);
 router.post("/points/import", requireAuth, requireSuper, importPointsFromBase64);
 
-/* ================= ODVZEM: IMPORT PLAN + VIEW ================= */
+/* ================= ODVZEM ================= */
 
 router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, res) => {
   try {
@@ -1160,8 +1167,6 @@ router.get("/odvzem-view", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= ODVZEM: MANUAL OVERRIDES (STAFF) ================= */
-
 router.patch("/odvzem/override", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -1237,7 +1242,7 @@ router.delete("/odvzem/override", requireAuth, requireStaff, async (req, res) =>
   }
 });
 
-/* ================= ODVZEM: EXPORT PDF + EXCEL (ROG STYLE) ================= */
+/* ================= ODVZEM EXPORT PDF ================= */
 
 router.get("/odvzem/export-pdf", requireAuth, async (req, res) => {
   let finished = false;
@@ -1531,7 +1536,7 @@ router.get("/odvzem/export-excel", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= HUNT LOGS (LIST) ================= */
+/* ================= HUNT LOGS ================= */
 
 router.get("/hunt-logs", requireAuth, async (req, res) => {
   try {
@@ -1593,8 +1598,6 @@ router.get("/hunt-logs", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
   }
 });
-
-/* ================= HUNT LOGS: EXPORT PDF + CSV ================= */
 
 function matchesHuntFilter(log, filter) {
   const h = !!log.harvest;
@@ -1921,25 +1924,12 @@ router.get("/hunt-logs/export-csv", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= EVENTS (LD DOGODKI) ================= */
-/*
-  Collection: ld_events
-  doc:
-  {
-    ldId,
-    title,
-    startsAt: Timestamp,
-    location,
-    description,
-    attachments: [{ attachmentId, filename, mime, path, url, uploadedAt, uploadedBy }],
-    createdAt, updatedAt, createdBy
-  }
-*/
+/* ================= EVENTS ================= */
 
 router.get("/events", requireAuth, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    const ldId = resolveTargetLdId(req);
+    if (!ldId) return res.status(400).json({ error: "Missing ldId" });
 
     const limit = Math.min(Number(req.query?.limit || 500), 2000);
     const fromRaw = safeStr(req.query?.from);
@@ -1949,8 +1939,12 @@ router.get("/events", requireAuth, async (req, res) => {
     const fromD = fromRaw ? new Date(fromRaw) : null;
     const toD = toRaw ? new Date(toRaw) : null;
 
-    if (fromRaw && (!fromD || Number.isNaN(fromD.getTime()))) return res.status(400).json({ error: "Invalid from" });
-    if (toRaw && (!toD || Number.isNaN(toD.getTime()))) return res.status(400).json({ error: "Invalid to" });
+    if (fromRaw && (!fromD || Number.isNaN(fromD.getTime()))) {
+      return res.status(400).json({ error: "Invalid from" });
+    }
+    if (toRaw && (!toD || Number.isNaN(toD.getTime()))) {
+      return res.status(400).json({ error: "Invalid to" });
+    }
 
     const snap = await admin
       .firestore()
@@ -2019,8 +2013,8 @@ router.get("/events", requireAuth, async (req, res) => {
 
 router.post("/events", requireAuth, requireStaff, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    const ldId = resolveTargetLdId(req);
+    if (!ldId) return res.status(400).json({ error: "Missing ldId" });
 
     const title = safeStr(req.body?.title);
     const startsAtRaw = safeStr(req.body?.startsAt);
@@ -2065,7 +2059,7 @@ router.post("/events", requireAuth, requireStaff, async (req, res) => {
       console.error("event_created push failed:", pushError);
     }
 
-    return res.json({ ok: true, id: ref.id });
+    return res.json({ ok: true, id: ref.id, ldId });
   } catch (e) {
     return res.status(500).json({
       error: "Server error",
@@ -2076,10 +2070,11 @@ router.post("/events", requireAuth, requireStaff, async (req, res) => {
 
 router.patch("/events/:id", requireAuth, requireStaff, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
+    const tokenLdId = String(req.user?.ldId || "").trim();
+    const requestedLdId = resolveTargetLdId(req);
     const id = String(req.params.id || "").trim();
 
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!tokenLdId) return res.status(400).json({ error: "Missing ldId in token." });
     if (!id) return res.status(400).json({ error: "Missing id" });
 
     const ref = admin.firestore().collection("ld_events").doc(id);
@@ -2090,7 +2085,9 @@ router.patch("/events/:id", requireAuth, requireStaff, async (req, res) => {
     }
 
     const data = snap.data() || {};
-    if (!isSuper(req) && String(data.ldId || "") !== ldId) {
+    const eventLdId = String(data.ldId || "").trim();
+
+    if (!isSuper(req) && eventLdId !== tokenLdId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
@@ -2108,20 +2105,25 @@ router.patch("/events/:id", requireAuth, requireStaff, async (req, res) => {
       patch.startsAt = admin.firestore.Timestamp.fromDate(d);
     }
 
+    if (isSuper(req) && requestedLdId && requestedLdId !== eventLdId) {
+      patch.ldId = requestedLdId;
+    }
+
     patch.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
     await ref.set(patch, { merge: true });
 
+    const finalLdId = patch.ldId || eventLdId || tokenLdId;
     const mergedTitle = patch.title || data.title || "Dogodek";
 
     try {
       await sendToLd({
-        ldId,
+        ldId: finalLdId,
         title: "Sprememba dogodka",
         body: `Dogodek "${mergedTitle}" je bil posodobljen.`,
         data: {
           type: "event_updated",
-          ldId,
+          ldId: finalLdId,
           eventId: id,
         },
       });
@@ -2129,7 +2131,7 @@ router.patch("/events/:id", requireAuth, requireStaff, async (req, res) => {
       console.error("event_updated push failed:", pushError);
     }
 
-    return res.json({ ok: true, id, patch });
+    return res.json({ ok: true, id, ldId: finalLdId, patch });
   } catch (e) {
     return res.status(500).json({
       error: "Server error",
@@ -2140,9 +2142,9 @@ router.patch("/events/:id", requireAuth, requireStaff, async (req, res) => {
 
 router.delete("/events/:id", requireAuth, requireStaff, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
+    const tokenLdId = String(req.user?.ldId || "").trim();
     const id = String(req.params.id || "").trim();
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!tokenLdId) return res.status(400).json({ error: "Missing ldId in token." });
     if (!id) return res.status(400).json({ error: "Missing id" });
 
     const ref = admin.firestore().collection("ld_events").doc(id);
@@ -2150,7 +2152,9 @@ router.delete("/events/:id", requireAuth, requireStaff, async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: "Event not found" });
 
     const ev = snap.data() || {};
-    if (!isSuper(req) && String(ev.ldId || "") !== ldId) return res.status(403).json({ error: "Forbidden (other LD)" });
+    const eventLdId = String(ev.ldId || "").trim();
+
+    if (!isSuper(req) && eventLdId !== tokenLdId) return res.status(403).json({ error: "Forbidden (other LD)" });
 
     const attachments = Array.isArray(ev.attachments) ? ev.attachments : [];
     const bucket = admin.storage().bucket();
@@ -2164,13 +2168,13 @@ router.delete("/events/:id", requireAuth, requireStaff, async (req, res) => {
     }
 
     await ref.delete();
-    return res.json({ ok: true, id, deleted: true });
+    return res.json({ ok: true, id, ldId: eventLdId, deleted: true });
   } catch (e) {
     return res.status(500).json({ error: "Server error", detail: String(e?.stack || e?.message || e) });
   }
 });
 
-/* ================= EVENTS: IMPORT HELPERS ================= */
+/* ================= EVENTS IMPORT HELPERS ================= */
 
 function parseCsvLine(line) {
   const out = [];
@@ -2268,12 +2272,12 @@ function parseEventsFromJson(text) {
     });
 }
 
-/* ================= EVENTS: IMPORT (STAFF) ================= */
+/* ================= EVENTS IMPORT ================= */
 
 router.post("/events/import", requireAuth, requireStaff, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    const ldId = resolveTargetLdId(req);
+    if (!ldId) return res.status(400).json({ error: "Missing ldId" });
 
     const filename = safeStr(req.body?.filename) || "events.csv";
     const b64 = safeStr(req.body?.contentBase64);
@@ -2331,7 +2335,7 @@ router.post("/events/import", requireAuth, requireStaff, async (req, res) => {
 
     if (ops > 0) await batch.commit();
 
-    return res.json({ ok: true, filename, created });
+    return res.json({ ok: true, filename, ldId, created });
   } catch (e) {
     return res.status(e?.status || 500).json({
       error: e?.status ? e.message : "Server error",
@@ -2340,12 +2344,12 @@ router.post("/events/import", requireAuth, requireStaff, async (req, res) => {
   }
 });
 
-/* ================= EVENTS: ATTACHMENTS ================= */
+/* ================= EVENTS ATTACHMENTS ================= */
 
 router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    const tokenLdId = String(req.user?.ldId || "").trim();
+    if (!tokenLdId) return res.status(400).json({ error: "Missing ldId in token." });
 
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "Missing event id" });
@@ -2363,7 +2367,9 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
     if (!evSnap.exists) return res.status(404).json({ error: "Event not found" });
 
     const ev = evSnap.data() || {};
-    if (!isSuper(req) && String(ev.ldId || "") !== ldId) {
+    const eventLdId = String(ev.ldId || "").trim();
+
+    if (!isSuper(req) && eventLdId !== tokenLdId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
@@ -2377,7 +2383,7 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
 
     const bucket = admin.storage().bucket();
     const attachmentId = admin.firestore().collection("_").doc().id;
-    const objectPath = `ld_events/${ldId}/${id}/${attachmentId}_${safeName}`;
+    const objectPath = `ld_events/${eventLdId}/${id}/${attachmentId}_${safeName}`;
 
     const buf = Buffer.from(b64, "base64");
     const file = bucket.file(objectPath);
@@ -2387,7 +2393,7 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
         contentType: safeMime,
         metadata: {
           uploadedBy: String(req.user?.uid || req.user?.code || ""),
-          ldId,
+          ldId: eventLdId,
           eventId: id,
           attachmentId,
         },
@@ -2417,6 +2423,7 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
     return res.json({
       ok: true,
       id,
+      ldId: eventLdId,
       attachment: {
         attachmentId,
         filename: safeName,
@@ -2432,14 +2439,13 @@ router.post("/events/:id/attachment", requireAuth, requireStaff, async (req, res
   }
 });
 
-// GET /ld/events/:id/attachments/:attachmentId/download
 router.get("/events/:id/attachments/:attachmentId/download", requireAuth, async (req, res) => {
   try {
-    const ldId = String(req.user?.ldId || "").trim();
+    const tokenLdId = String(req.user?.ldId || "").trim();
     const id = String(req.params.id || "").trim();
     const attachmentId = String(req.params.attachmentId || "").trim();
 
-    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+    if (!tokenLdId) return res.status(400).json({ error: "Missing ldId in token." });
     if (!id) return res.status(400).json({ error: "Missing event id" });
     if (!attachmentId) return res.status(400).json({ error: "Missing attachmentId" });
 
@@ -2448,7 +2454,9 @@ router.get("/events/:id/attachments/:attachmentId/download", requireAuth, async 
     if (!evSnap.exists) return res.status(404).json({ error: "Event not found" });
 
     const ev = evSnap.data() || {};
-    if (!isSuper(req) && String(ev.ldId || "") !== ldId) {
+    const eventLdId = String(ev.ldId || "").trim();
+
+    if (!isSuper(req) && eventLdId !== tokenLdId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
 
@@ -2489,9 +2497,7 @@ router.get("/events/:id/attachments/:attachmentId/download", requireAuth, async 
   }
 });
 
-/* ================= MY HUNT STATS =================
-   GET /ld/hunt-stats/me?year=2026
-*/
+/* ================= MY HUNT STATS ================= */
 
 router.get("/hunt-stats/me", requireAuth, async (req, res) => {
   try {
@@ -2602,9 +2608,7 @@ router.get("/hunt-stats/me", requireAuth, async (req, res) => {
   }
 });
 
-/* ================= HUNTER ASSIGNMENTS: LIST =================
-   GET /ld/hunter-assignments
-*/
+/* ================= HUNTER ASSIGNMENTS ================= */
 
 router.get("/hunter-assignments", requireAuth, requireStaff, async (req, res) => {
   try {
@@ -2649,10 +2653,6 @@ router.get("/hunter-assignments", requireAuth, requireStaff, async (req, res) =>
     });
   }
 });
-
-/* ================= HUNTER ASSIGNMENTS: ME =================
-   GET /ld/hunter-assignments/me
-*/
 
 router.get("/hunter-assignments/me", requireAuth, async (req, res) => {
   try {
@@ -2703,10 +2703,6 @@ router.get("/hunter-assignments/me", requireAuth, async (req, res) => {
     });
   }
 });
-
-/* ================= HUNTER ASSIGNMENTS: CREATE =================
-   POST /ld/hunter-assignments
-*/
 
 router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) => {
   try {
@@ -2781,10 +2777,6 @@ router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) =
   }
 });
 
-/* ================= HUNTER ASSIGNMENTS: UPDATE =================
-   PATCH /ld/hunter-assignments/:id
-*/
-
 router.patch("/hunter-assignments/:id", requireAuth, requireStaff, async (req, res) => {
   try {
     const ldId = String(req.user?.ldId || "").trim();
@@ -2826,10 +2818,6 @@ router.patch("/hunter-assignments/:id", requireAuth, requireStaff, async (req, r
     });
   }
 });
-
-/* ================= HUNTER ASSIGNMENTS: DELETE =================
-   DELETE /ld/hunter-assignments/:id
-*/
 
 router.delete("/hunter-assignments/:id", requireAuth, requireStaff, async (req, res) => {
   try {
