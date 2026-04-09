@@ -198,7 +198,7 @@ async function finishActiveHuntAndLog({
 router.post("/register-token", requireAuth, async (req, res) => {
   try {
     const token = safeStr(req.body?.token);
-    const hunterId = safeStr(req.body?.hunterId) || safeStr(req.user?.code);
+    const hunterId = safeStr(req.user?.uid);
     const firebaseUid = safeStr(req.body?.firebaseUid) || safeStr(req.user?.uid);
     const ldId = safeStr(req.body?.ldId) || safeStr(req.user?.ldId);
     const platform = safeStr(req.body?.platform) || "android";
