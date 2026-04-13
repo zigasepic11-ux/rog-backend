@@ -37,6 +37,58 @@ function dayKey(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function toBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    return s === "true" || s === "1" || s === "yes";
+  }
+  if (typeof v === "number") return v !== 0;
+  return false;
+}
+
+function sanitizeHarvestItems(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((x) => {
+      const key = safeStr(x?.key);
+      const species = safeStr(x?.species);
+      const classLabel = safeStr(x?.classLabel);
+      const count = Number.isFinite(Number(x?.count)) ? Number(x.count) : 0;
+
+      if (!key || !species || !classLabel || count <= 0) return null;
+
+      return {
+        key,
+        species,
+        classLabel,
+        count,
+      };
+    })
+    .filter(Boolean);
+}
+
+function sanitizePendingItems(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((x) => {
+      const key = safeStr(x?.key) || "PENDING_OTHER";
+      const label = safeStr(x?.label);
+      const count = Number.isFinite(Number(x?.count)) ? Number(x.count) : 0;
+
+      if (!label || count <= 0) return null;
+
+      return {
+        key,
+        label,
+        count,
+      };
+    })
+    .filter(Boolean);
+}
+
 async function sendToUserTokens({ title, body, data, tokens }) {
   const cleanTokens = (tokens || []).filter(Boolean);
   if (!cleanTokens.length) {
@@ -125,9 +177,20 @@ async function addFinishedLogFromActiveHunt({
   finishedAt,
   endedReason,
   notes,
+  harvest,
+  species,
+  harvestItems,
+  pendingItems,
 }) {
   const startedAt = tsToDate(data.startedAt) || finishedAt;
   const locationMode = safeStr(data.locationMode) || "private_text";
+
+  const cleanHarvestItems = sanitizeHarvestItems(harvestItems);
+  const cleanPendingItems = sanitizePendingItems(pendingItems);
+  const cleanHarvest = toBool(harvest);
+  const cleanSpecies = safeStr(species);
+  const cleanNotes = safeStr(notes);
+  const safeEndedReason = safeStr(endedReason);
 
   const logData = {
     hunterId: firebaseUid,
@@ -141,16 +204,16 @@ async function addFinishedLogFromActiveHunt({
     startedAt: admin.firestore.Timestamp.fromDate(startedAt),
     finishedAt: admin.firestore.Timestamp.fromDate(finishedAt),
 
-    harvest: false,
-    species: "",
-    notes: safeStr(notes),
-    endedReason: safeStr(endedReason),
+    harvest: cleanHarvest,
+    species: cleanSpecies,
+    notes: cleanNotes,
+    endedReason: safeEndedReason,
 
     dayKey: dayKey(finishedAt),
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
 
-    harvestItems: [],
-    pendingItems: [],
+    harvestItems: cleanHarvest ? cleanHarvestItems : [],
+    pendingItems: cleanHarvest ? cleanPendingItems : [],
   };
 
   if (locationMode === "poi") {
@@ -171,6 +234,10 @@ async function finishActiveHuntAndLog({
   firebaseUid,
   endedReason,
   notes,
+  harvest = false,
+  species = "",
+  harvestItems = [],
+  pendingItems = [],
 }) {
   const ref = admin.firestore().collection("active_hunts").doc(firebaseUid);
   const snap = await ref.get();
@@ -188,6 +255,10 @@ async function finishActiveHuntAndLog({
     finishedAt,
     endedReason,
     notes,
+    harvest,
+    species,
+    harvestItems,
+    pendingItems,
   });
 
   await ref.delete();
@@ -402,10 +473,32 @@ router.post("/hunt-end-by-user", requireAuth, async (req, res) => {
     const firebaseUid = safeStr(req.user?.uid || req.body?.firebaseUid);
     if (!firebaseUid) return res.status(400).json({ error: "Missing firebaseUid" });
 
+    const endedReason = safeStr(req.body?.endedReason) || "user_confirmed_end";
+    const harvest = toBool(req.body?.harvest);
+    const species = safeStr(req.body?.species);
+    const notesFromBody = safeStr(req.body?.notes);
+    const harvestItems = sanitizeHarvestItems(req.body?.harvestItems);
+    const pendingItems = sanitizePendingItems(req.body?.pendingItems);
+
+    let notes = notesFromBody;
+    if (!notes) {
+      if (endedReason === "manual") {
+        notes = "";
+      } else if (endedReason === "user_confirmed_end") {
+        notes = "Lovec je potrdil zaključek lova.";
+      } else if (endedReason === "no_response_after_reminder") {
+        notes = "AUTO: brez odziva na opomnik 'Ali si še na lovu?'.";
+      }
+    }
+
     const result = await finishActiveHuntAndLog({
       firebaseUid,
-      endedReason: "user_confirmed_end",
-      notes: "Lovec je potrdil zaključek lova.",
+      endedReason,
+      notes,
+      harvest,
+      species,
+      harvestItems,
+      pendingItems,
     });
 
     return res.json({ ok: true, result });
@@ -509,6 +602,10 @@ router.post("/hunt-monitor-tick", async (req, res) => {
             firebaseUid,
             endedReason: "no_response_after_reminder",
             notes: "AUTO: brez odziva na opomnik 'Ali si še na lovu?'.",
+            harvest: false,
+            species: "",
+            harvestItems: [],
+            pendingItems: [],
           });
 
           autoFinished++;
