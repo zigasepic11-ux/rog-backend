@@ -39,6 +39,7 @@ async function cleanupInvalidTokens(tokens) {
   for (const token of tokens) {
     const docId = Buffer.from(token).toString("base64url");
     const ref = db.collection("fcm_tokens").doc(docId);
+
     batch.set(
       ref,
       {
@@ -53,23 +54,56 @@ async function cleanupInvalidTokens(tokens) {
 }
 
 async function sendToTokens(tokens, { title, body, data = {} }) {
-  if (!Array.isArray(tokens) || tokens.length === 0) {
+  const cleanTokens = Array.from(
+    new Set((tokens || []).map(safeStr).filter(Boolean))
+  );
+
+  if (cleanTokens.length === 0) {
     return { ok: true, sent: 0, failed: 0 };
   }
 
+  const cleanTitle = safeStr(title) || "ROG";
+  const cleanBody = safeStr(body);
+
+  const cleanData = Object.fromEntries(
+    Object.entries(data || {}).map(([k, v]) => [k, v == null ? "" : String(v)])
+  );
+
   const message = {
-    tokens,
+    tokens: cleanTokens,
+
+    // Android + iOS visible notification
     notification: {
-      title: safeStr(title) || "ROG",
-      body: safeStr(body),
+      title: cleanTitle,
+      body: cleanBody,
     },
-    data: Object.fromEntries(
-      Object.entries(data || {}).map(([k, v]) => [k, String(v ?? "")])
-    ),
+
+    data: cleanData,
+
     android: {
       priority: "high",
       notification: {
         channelId: "rog_notifications",
+        sound: "default",
+        priority: "high",
+      },
+    },
+
+    // iOS / APNs config
+    apns: {
+      headers: {
+        "apns-priority": "10",
+      },
+      payload: {
+        aps: {
+          alert: {
+            title: cleanTitle,
+            body: cleanBody,
+          },
+          sound: "default",
+          badge: 1,
+          "content-available": 1,
+        },
       },
     },
   };
@@ -77,14 +111,22 @@ async function sendToTokens(tokens, { title, body, data = {} }) {
   const response = await admin.messaging().sendEachForMulticast(message);
 
   const invalidTokens = [];
+
   response.responses.forEach((r, i) => {
     if (!r.success) {
       const code = r.error?.code || "";
+
+      console.error("FCM send failed:", {
+        tokenPrefix: cleanTokens[i]?.slice(0, 18),
+        code,
+        message: r.error?.message,
+      });
+
       if (
         code.includes("registration-token-not-registered") ||
         code.includes("invalid-argument")
       ) {
-        invalidTokens.push(tokens[i]);
+        invalidTokens.push(cleanTokens[i]);
       }
     }
   });
@@ -113,4 +155,5 @@ async function sendToHunter({ hunterId, title, body, data = {} }) {
 module.exports = {
   sendToLd,
   sendToHunter,
+  sendToTokens,
 };
