@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const { GoogleAuth } = require("google-auth-library");
 require("dotenv").config();
 
 const { initFirebase } = require("./firebase");
@@ -160,6 +161,36 @@ app.get("/debug/firebase", async (req, res) => {
       message: e?.message,
       code: e?.code,
       details: e?.details,
+    });
+  }
+});
+app.get("/debug/token", async (req, res) => {
+  try {
+    const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
+    const serviceAccount = json ? JSON.parse(json) : null;
+
+    const auth = new GoogleAuth({
+      credentials: serviceAccount,
+      projectId: serviceAccount?.project_id,
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+
+    res.json({
+      ok: true,
+      projectId: await auth.getProjectId(),
+      clientEmail: serviceAccount?.client_email,
+      privateKeyId: serviceAccount?.private_key_id,
+      tokenLength: token?.token?.length || 0,
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      message: e?.message,
+      code: e?.code,
+      stack: e?.stack,
     });
   }
 });
