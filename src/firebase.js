@@ -17,8 +17,6 @@ function initFirebase() {
       ...(storageBucket ? { storageBucket } : {}),
     });
 
-    admin.firestore().settings({ preferRest: true });
-
     return admin;
   }
 
@@ -40,8 +38,6 @@ function initFirebase() {
     projectId: serviceAccount.project_id,
     ...(storageBucket ? { storageBucket } : {}),
   });
-
-  admin.firestore().settings({ preferRest: true });
 
   return admin;
 }
