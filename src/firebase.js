@@ -4,7 +4,12 @@ const fs = require("fs");
 const path = require("path");
 
 function initFirebase() {
-  if (admin.apps.length) return admin;
+  try {
+    admin.app();
+    return admin;
+  } catch (_) {
+    // Firebase še ni inicializiran
+  }
 
   const storageBucket = (process.env.FIREBASE_STORAGE_BUCKET || "").trim() || undefined;
 
