@@ -39,4 +39,6 @@ function initFirebase() {
   return admin;
 }
 
+initFirebase();
+
 module.exports = { admin, initFirebase };
