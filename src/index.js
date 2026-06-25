@@ -287,6 +287,31 @@ app.get("/debug/project", async (req, res) => {
   }
 });
 
+app.get("/debug/token", async (req, res) => {
+  try {
+    const { GoogleAuth } = require("google-auth-library");
+
+    const auth = new GoogleAuth({
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+
+    res.json({
+      ok: true,
+      tokenLength: token.token.length,
+      first20: token.token.substring(0, 20),
+    });
+  } catch (e) {
+    res.json({
+      ok: false,
+      error: e.message,
+      stack: e.stack,
+    });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
