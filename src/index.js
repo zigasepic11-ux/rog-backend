@@ -118,6 +118,35 @@ app.get("/debug/routes", (req, res) => {
   });
 });
 
+app.get("/debug/firebase", async (req, res) => {
+  try {
+    const { admin } = require("./firebase");
+
+    const appInstance = admin.app();
+    const db = admin.firestore();
+
+    const snap = await db.collection("hunters").doc("999999").get();
+
+    res.json({
+      ok: true,
+      projectId: appInstance.options.projectId,
+      storageBucket: appInstance.options.storageBucket || null,
+      hunter999999Exists: snap.exists,
+    });
+  } catch (e) {
+    console.error("========== FIREBASE DEBUG ERROR ==========");
+    console.error(e);
+
+    res.status(500).json({
+      ok: false,
+      message: e?.message,
+      code: e?.code,
+      details: e?.details,
+      stack: e?.stack,
+    });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
