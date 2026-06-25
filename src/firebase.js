@@ -13,8 +13,12 @@ function initFirebase() {
     const serviceAccount = JSON.parse(json);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
+      projectId: serviceAccount.project_id,
       ...(storageBucket ? { storageBucket } : {}),
     });
+
+    admin.firestore().settings({ preferRest: true });
+
     return admin;
   }
 
@@ -33,8 +37,11 @@ function initFirebase() {
   const serviceAccount = JSON.parse(fs.readFileSync(fullPath, "utf8"));
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    projectId: serviceAccount.project_id,
     ...(storageBucket ? { storageBucket } : {}),
   });
+
+  admin.firestore().settings({ preferRest: true });
 
   return admin;
 }
