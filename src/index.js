@@ -344,6 +344,16 @@ app.get("/debug/token-test", async (req, res) => {
   }
 });
 
+app.get("/debug/ip", async (req, res) => {
+  try {
+    const response = await fetch("https://api.ipify.org?format=json");
+    const data = await response.json();
+    res.json({ outboundIp: data.ip });
+  } catch(e) {
+    res.status(500).json({ message: e.message });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
