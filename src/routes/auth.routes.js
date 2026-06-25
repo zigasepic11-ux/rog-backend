@@ -93,10 +93,19 @@ router.post("/login", async (req, res) => {
         enabled: true,
       },
     });
-  } catch (e) {
+   } catch (e) {
+    console.error("========== LOGIN ERROR ==========");
+    console.error(e);
+    console.error("message:", e?.message);
+    console.error("code:", e?.code);
+    console.error("details:", e?.details);
+    console.error("stack:", e?.stack);
+
     return res.status(500).json({
       error: "Server error",
-      detail: String(e?.stack || e?.message || e),
+      detail: e?.message || String(e),
+      code: e?.code || null,
+      details: e?.details || null,
     });
   }
 });
