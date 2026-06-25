@@ -354,6 +354,17 @@ app.get("/debug/ip", async (req, res) => {
   }
 });
 
+app.get("/debug/env-hash", async (req, res) => {
+  const crypto = require("crypto");
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
+  const hash = crypto.createHash("sha256").update(json).digest("hex");
+  res.json({
+    length: json.length,
+    hash: hash,
+    first50: json.substring(0, 50),
+  });
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
