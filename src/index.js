@@ -232,6 +232,34 @@ app.get("/debug/firestore-rest", async (req, res) => {
   }
 });
 
+app.get("/debug/firestore-client", async (req, res) => {
+  try {
+    const { Firestore } = require("@google-cloud/firestore");
+
+    const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+
+    const db = new Firestore({
+      projectId: sa.project_id,
+      credentials: sa,
+    });
+
+    const cols = await db.listCollections();
+
+    res.json({
+      ok: true,
+      collections: cols.map(c => c.id),
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      message: e.message,
+      code: e.code,
+      details: e.details,
+      stack: e.stack,
+    });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
