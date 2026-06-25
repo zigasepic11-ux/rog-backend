@@ -119,30 +119,47 @@ app.get("/debug/routes", (req, res) => {
 });
 
 app.get("/debug/firebase", async (req, res) => {
+  const { admin } = require("./firebase");
+
   try {
-    const { admin } = require("./firebase");
-
     const appInstance = admin.app();
-    const db = admin.firestore();
+    const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
+    const serviceAccount = json ? JSON.parse(json) : null;
 
-    const snap = await db.collection("hunters").doc("999999").get();
+    const info = {
+      initialized: admin.apps.length,
+      projectIdFromApp: appInstance.options.projectId || null,
+      projectIdFromJson: serviceAccount?.project_id || null,
+      clientEmailFromJson: serviceAccount?.client_email || null,
+      privateKeyIdFromJson: serviceAccount?.private_key_id || null,
+      storageBucket: appInstance.options.storageBucket || null,
+    };
+
+    let firestoreRead = null;
+
+    try {
+      const snap = await admin.firestore().collection("hunters").doc("999999").get();
+      firestoreRead = { ok: true, exists: snap.exists };
+    } catch (e) {
+      firestoreRead = {
+        ok: false,
+        message: e?.message,
+        code: e?.code,
+        details: e?.details,
+      };
+    }
 
     res.json({
-      ok: true,
-      projectId: appInstance.options.projectId,
-      storageBucket: appInstance.options.storageBucket || null,
-      hunter999999Exists: snap.exists,
+      ok: firestoreRead?.ok === true,
+      firebaseInfo: info,
+      firestoreRead,
     });
   } catch (e) {
-    console.error("========== FIREBASE DEBUG ERROR ==========");
-    console.error(e);
-
     res.status(500).json({
       ok: false,
       message: e?.message,
       code: e?.code,
       details: e?.details,
-      stack: e?.stack,
     });
   }
 });
