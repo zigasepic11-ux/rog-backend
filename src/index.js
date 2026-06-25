@@ -312,6 +312,38 @@ app.get("/debug/token", async (req, res) => {
   }
 });
 
+app.get("/debug/token-test", async (req, res) => {
+  try {
+    const { GoogleAuth } = require("google-auth-library");
+    const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    
+    const auth = new GoogleAuth({
+      credentials: sa,
+      scopes: ["https://www.googleapis.com/auth/datastore"],
+    });
+    
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    
+    const response = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${sa.project_id}/databases/(default)/documents/hunters/999999`,
+      { headers: { Authorization: `Bearer ${token.token}` } }
+    );
+    
+    const body = await response.text();
+    
+    res.json({
+      tokenLength: token.token?.length,
+      clientEmail: sa.client_email,
+      privateKeyId: sa.private_key_id,
+      firestoreStatus: response.status,
+      firestoreBody: body.substring(0, 500),
+    });
+  } catch(e) {
+    res.status(500).json({ message: e.message });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
