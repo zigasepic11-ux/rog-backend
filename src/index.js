@@ -260,6 +260,33 @@ app.get("/debug/firestore-client", async (req, res) => {
   }
 });
 
+app.get("/debug/project", async (req, res) => {
+  try {
+    const { GoogleAuth } = require("google-auth-library");
+
+    const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+
+    const auth = new GoogleAuth({
+      credentials: sa,
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+
+    const client = await auth.getClient();
+
+    const r = await client.request({
+      url: `https://cloudresourcemanager.googleapis.com/v1/projects/${sa.project_id}`,
+    });
+
+    res.json(r.data);
+  } catch (e) {
+    res.status(500).json({
+      message: e.message,
+      code: e.code,
+      details: e.response?.data || e.details,
+    });
+  }
+});
+
 app.use((req, res) => res.status(404).json({ error: "Not found", path: req.originalUrl }));
 
 app.use((err, req, res, next) => {
