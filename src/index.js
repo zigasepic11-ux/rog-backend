@@ -210,7 +210,7 @@ app.get("/debug/firestore-rest", async (req, res) => {
     const token = await client.getAccessToken();
 
     const response = await fetch(
-      `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/hunters/999999`,
+      `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/%28default%29/documents/hunters/999999`,
       {
         headers: {
           Authorization: `Bearer ${token.token}`,
