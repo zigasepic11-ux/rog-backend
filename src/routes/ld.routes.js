@@ -1044,8 +1044,8 @@ async function importPointsFromBase64(req, res) {
   }
 }
 
-router.post("/points/import-file", requireAuth, requireSuper, importPointsFromBase64);
-router.post("/points/import", requireAuth, requireSuper, importPointsFromBase64);
+router.post("/points/import-file", requireAuth, requireStaff, importPointsFromBase64);
+router.post("/points/import", requireAuth, requireStaff, importPointsFromBase64);
 
 /* ================= ODVZEM ================= */
 
