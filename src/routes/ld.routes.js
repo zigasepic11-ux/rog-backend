@@ -397,29 +397,38 @@ async function loadOdvzemOverridesMap(ldId, year) {
 }
 
 async function computeAutoExecutedForKey(ldId, year, key) {
-  const start = admin.firestore.Timestamp.fromDate(new Date(year, 0, 1, 0, 0, 0));
-  const end = admin.firestore.Timestamp.fromDate(new Date(year + 1, 0, 1, 0, 0, 0));
+    const start = admin.firestore.Timestamp.fromDate(new Date(year, 0, 1, 0, 0, 0));
+    const end = admin.firestore.Timestamp.fromDate(new Date(year + 1, 0, 1, 0, 0, 0));
 
-  const logsSnap = await admin
-    .firestore()
-    .collection("hunt_logs")
-    .where("ldId", "==", ldId)
-    .where("finishedAt", ">=", start)
-    .where("finishedAt", "<", end)
-    .get();
+    const logsSnap = await admin
+      .firestore()
+      .collection("hunt_logs")
+      .where("ldId", "==", ldId)
+      .where("finishedAt", ">=", start)
+      .where("finishedAt", "<", end)
+      .get();
 
-  let sum = 0;
-  for (const doc of logsSnap.docs) {
-    const d = doc.data() || {};
-    const harvestItems = Array.isArray(d.harvestItems) ? d.harvestItems : [];
-    for (const it of harvestItems) {
-      if (safeStr(it?.key) !== key) continue;
-      const cnt = Number(it?.count || 0);
-      if (Number.isFinite(cnt) && cnt > 0) sum += cnt;
+    let sum = 0;
+    for (const doc of logsSnap.docs) {
+      const d = doc.data() || {};
+      const harvestItems = Array.isArray(d.harvestItems) ? d.harvestItems : [];
+      for (const it of harvestItems) {
+        if (safeStr(it?.key) !== key) continue;
+        const cnt = Number(it?.count || 0);
+        if (Number.isFinite(cnt) && cnt > 0) sum += cnt;
+      }
     }
+    return sum;
   }
-  return sum;
-}
+
+  async function getBaselineExecutedForKey(ldId, year, key) {
+    const planId = `${ldId}_${year}`;
+    const snap = await admin.firestore().collection("odvzem_plans").doc(planId).get();
+    if (!snap.exists) return 0;
+    const items = Array.isArray(snap.data()?.items) ? snap.data().items : [];
+    const it = items.find((x) => safeStr(x?.key) === key);
+    return Number(it?.baselineExecuted || 0);
+  }
 
 /* ================= ODVZEM: LOAD VIEW ================= */
 
@@ -470,36 +479,39 @@ async function loadOdvzemViewRows(ldId, year) {
 
   const overrides = await loadOdvzemOverridesMap(ldId, year);
 
-  const rows = items.map((it) => {
-    const key = safeStr(it?.key);
-    const planCount = Number(it?.plan || 0);
+    const rows = items.map((it) => {
+      const key = safeStr(it?.key);
+      const planCount = Number(it?.plan || 0);
+      const baselineExecuted = Number(it?.baselineExecuted || 0);
 
-    const executedAuto = Number(byKey[key] || 0);
-    const pending = Number(pendingByKey[key] || 0);
+      const executedAuto = Number(byKey[key] || 0);
+      const pending = Number(pendingByKey[key] || 0);
 
-    const ov = overrides[key];
-    const executedDelta = ov ? (numOrNull(ov.executedDelta) ?? 0) : 0;
-    const executed = executedAuto + executedDelta;
+      const ov = overrides[key];
+      const executedDelta = ov ? (numOrNull(ov.executedDelta) ?? 0) : 0;
+      const executed = baselineExecuted + executedAuto + executedDelta;
 
-    return {
-      key,
-      species: safeStr(it?.species),
-      classLabel: safeStr(it?.classLabel),
-      plan: planCount,
-      executedAuto,
-      executedDelta,
-      executed,
-      override: ov
-        ? {
-            reason: safeStr(ov.reason),
-            updatedBy: safeStr(ov.updatedBy),
-            updatedAt: ov.updatedAt || null,
-          }
-        : null,
-      pending,
-      percent: pct(executed, planCount),
-    };
-  });
+      return {
+        key,
+        species: safeStr(it?.species),
+        classLabel: safeStr(it?.classLabel),
+        plan: planCount,
+        baselineExecuted,
+        baselineLosses: it?.baselineLosses || null,
+        executedAuto,
+        executedDelta,
+        executed,
+        override: ov
+          ? {
+              reason: safeStr(ov.reason),
+              updatedBy: safeStr(ov.updatedBy),
+              updatedAt: ov.updatedAt || null,
+            }
+          : null,
+        pending,
+        percent: pct(executed, planCount),
+      };
+    });
 
   return { plan, rows };
 }
@@ -1090,26 +1102,54 @@ router.post("/odvzem-plan/import-excel", requireAuth, requireStaff, async (req, 
         currentSpecies = s0;
       }
 
-      const plan = num(r[2]);
-      const executedFromExcel = num(r[3]);
-      const total = num(r[13]);
-      const percentExcel = num(r[14]);
+         const plan = num(r[2]);
+          const executedFromExcel = num(r[3]);
 
-      if (!safeStr(currentSpecies)) continue;
-      if (!s1 && plan == null && executedFromExcel == null && total == null && percentExcel == null) continue;
+          const lossRoadKill = num(r[4]);
+          const lossRailKill = num(r[5]);
+          const lossDogs = num(r[6]);
+          const lossMower = num(r[7]);
+          const lossPoaching = num(r[8]);
+          const lossOther = num(r[9]);
+          const lossDisease = num(r[10]);
+          const lossPredators = num(r[11]);
+          const lossUnknown = num(r[12]);
 
-      const classLabel = s1 || "skupaj";
-      const key = makeKey(currentSpecies, classLabel);
+          const total = num(r[13]);
+          const percentExcel = num(r[14]);
 
-      items.push({
-        key,
-        species: currentSpecies,
-        classLabel,
-        plan: plan ?? 0,
-        executedExcel: executedFromExcel ?? 0,
-        percentExcel: percentExcel ?? null,
-        totalExcel: total ?? null,
-      });
+          if (!safeStr(currentSpecies)) continue;
+
+          const anyLoss = [
+            lossRoadKill, lossRailKill, lossDogs, lossMower,
+            lossPoaching, lossOther, lossDisease, lossPredators, lossUnknown,
+          ].some((v) => v != null);
+
+          if (!s1 && plan == null && executedFromExcel == null && total == null && percentExcel == null && !anyLoss) continue;
+
+          const classLabel = s1 || "skupaj";
+          const key = makeKey(currentSpecies, classLabel);
+
+          items.push({
+            key,
+            species: currentSpecies,
+            classLabel,
+            plan: plan ?? 0,
+            baselineExecuted: executedFromExcel ?? 0,
+            baselineLosses: {
+              povozenoCesta: lossRoadKill ?? 0,
+              povozenoZeleznica: lossRailKill ?? 0,
+              psi: lossDogs ?? 0,
+              kosilnica: lossMower ?? 0,
+              krivolov: lossPoaching ?? 0,
+              drugo: lossOther ?? 0,
+              bolezen: lossDisease ?? 0,
+              zveriUjede: lossPredators ?? 0,
+              neznano: lossUnknown ?? 0,
+            },
+            baselineTotal: total ?? null,
+            baselinePercent: percentExcel ?? null,
+          });
     }
 
     const id = `${ldId}_${year}`;
@@ -1185,13 +1225,16 @@ router.patch("/odvzem/override", requireAuth, requireStaff, async (req, res) => 
 
     let delta = null;
 
-    if (req.body?.executed != null) {
-      const desired = numOrNull(req.body.executed);
-      if (desired == null || desired < 0) return res.status(400).json({ error: "Invalid executed" });
+       if (req.body?.executed != null) {
+        const desired = numOrNull(req.body.executed);
+        if (desired == null || desired < 0) return res.status(400).json({ error: "Invalid executed" });
 
-      const auto = await computeAutoExecutedForKey(ldId, year, key);
-      delta = desired - auto;
-    } else if (req.body?.delta != null) {
+        const [auto, baseline] = await Promise.all([
+          computeAutoExecutedForKey(ldId, year, key),
+          getBaselineExecutedForKey(ldId, year, key),
+        ]);
+        delta = desired - auto - baseline;
+      } else if (req.body?.delta != null) {
       const d = numOrNull(req.body.delta);
       if (d == null) return res.status(400).json({ error: "Invalid delta" });
       delta = d;
