@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "rogapp2026"
-  }
+    "default": "rogapp2026",
+    "staging": "rog-app-staging"
+  },
+  "targets": {},
+  "etags": {}
 }

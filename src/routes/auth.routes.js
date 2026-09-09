@@ -206,5 +206,106 @@ router.post("/switch-ld", requireAuth, async (req, res) => {
     });
   }
 });
+// POST /auth/login-firebase
+// body: { idToken, ldId? }
+// Sprejme Firebase Auth ID token (od email+PIN prijave preko novega
+// invite/reset sistema), poišče aktiven membership, in izda STARI
+// JWT format - tako da Portal.jsx in vse ostale strani delujejo nespremenjene.
+router.post("/login-firebase", async (req, res) => {
+  try {
+    const idToken = String(req.body?.idToken || "").trim();
+    if (!idToken) {
+      return res.status(400).json({ error: "Missing idToken" });
+    }
 
+    let decoded;
+    try {
+      decoded = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      return res.status(401).json({ error: "Neveljaven ali potekel token." });
+    }
+
+    const uid = decoded.uid;
+
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "Uporabniški profil ne obstaja." });
+    }
+    const userData = userDoc.data() || {};
+    const name = String(userData.name || "Lovec").trim();
+
+    // Poišči aktivne memberships za tega uporabnika
+    const membershipsSnap = await admin
+      .firestore()
+      .collection("memberships")
+      .where("uid", "==", uid)
+      .where("status", "==", "active")
+      .get();
+
+    if (membershipsSnap.empty) {
+      return res.status(403).json({ error: "Ni aktivnih članstev za ta račun." });
+    }
+
+    const memberships = membershipsSnap.docs.map((d) => d.data());
+
+    // Če ima uporabnik samo eno aktivno LD, prijavi ga direktno vanjo
+    let selected;
+    const requestedLdId = String(req.body?.ldId || "").trim();
+
+    if (requestedLdId) {
+      selected = memberships.find((m) => m.ldId === requestedLdId);
+      if (!selected) {
+        return res.status(403).json({ error: "Nimate dostopa do te lovske družine." });
+      }
+    } else if (memberships.length === 1) {
+      selected = memberships[0];
+    } else {
+      // Več LD-jev - vrni seznam, naj uporabnik izbere (podobno kot switch-ld)
+      return res.json({
+        ok: true,
+        needsLdSelection: true,
+        lds: memberships.map((m) => ({ ldId: m.ldId, role: m.role })),
+      });
+    }
+
+    const role = String(selected.role || "member").trim();
+    const ldId = String(selected.ldId || "").trim();
+
+    if (!validRole(role)) {
+      return res.status(500).json({ error: "Invalid role on membership document." });
+    }
+
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      return res.status(500).json({ error: "Missing JWT_SECRET in .env" });
+    }
+
+    // Isti JWT format kot stari /auth/login, da Portal.jsx deluje nespremenjeno
+    const jwtPayload = {
+      uid,
+      code: uid,
+      role,
+      ldId,
+      name,
+    };
+    const token = jwt.sign(jwtPayload, secret, { expiresIn: "30d" });
+
+    const firebaseClaims = { ldId, role, name };
+    const firebaseToken = await admin.auth().createCustomToken(uid, firebaseClaims);
+
+    return res.json({
+      ok: true,
+      token,
+      firebaseToken,
+      user: { code: uid, name, ldId, role, enabled: true },
+    });
+  } catch (e) {
+    console.error("========== LOGIN-FIREBASE ERROR ==========");
+    console.error(e);
+    return res.status(500).json({
+      error: "Server error",
+      detail: e?.message || String(e),
+    });
+  }
+});
 module.exports = router;

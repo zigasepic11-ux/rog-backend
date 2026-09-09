@@ -532,12 +532,26 @@ router.get("/dashboard", requireAuth, async (req, res) => {
       }
     } catch {}
 
-    const huntersSnap = await admin
-      .firestore()
-      .collection("hunters")
-      .where("ldId", "==", ldId)
-      .get();
-    const usersCount = huntersSnap.size;
+      const huntersSnap = await admin
+        .firestore()
+        .collection("hunters")
+        .where("ldId", "==", ldId)
+        .get();
+
+      let newMembersCount = 0;
+      try {
+        const membershipsSnap = await admin
+          .firestore()
+          .collection("memberships")
+          .where("ldId", "==", ldId)
+          .where("status", "==", "active")
+          .get();
+        newMembersCount = membershipsSnap.size;
+      } catch (e) {
+        console.error("membershipsSnap query failed (non-fatal):", e?.message || e);
+      }
+
+      const usersCount = huntersSnap.size + newMembersCount;
 
     let huntsThisMonth = 0;
     try {
@@ -676,7 +690,12 @@ router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
 
     const patch = {};
 
-    if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
+    if (typeof req.body?.enabled === "boolean") {
+      patch.enabled = req.body.enabled;
+      patch.disabledAt = req.body.enabled
+        ? null
+        : admin.firestore.FieldValue.serverTimestamp();
+    }
     if (req.body?.name != null) patch.name = String(req.body.name).trim();
 
     if (req.body?.role != null) {

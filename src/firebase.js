@@ -18,7 +18,7 @@ function initFirebase() {
     const serviceAccount = JSON.parse(json);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
-      projectId: serviceAccount.project_id,
+      projectId: process.env.FIREBASE_PROJECT_ID_OVERRIDE || serviceAccount.project_id,
       ...(storageBucket ? { storageBucket } : {}),
     });
 
@@ -40,7 +40,7 @@ function initFirebase() {
   const serviceAccount = JSON.parse(fs.readFileSync(fullPath, "utf8"));
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    projectId: serviceAccount.project_id,
+    projectId: process.env.FIREBASE_PROJECT_ID_OVERRIDE || serviceAccount.project_id,
     ...(storageBucket ? { storageBucket } : {}),
   });
 
