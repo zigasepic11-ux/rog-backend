@@ -233,7 +233,7 @@ router.post("/login-firebase", async (req, res) => {
       return res.status(404).json({ error: "Uporabniški profil ne obstaja." });
     }
     const userData = userDoc.data() || {};
-    const name = String(userData.name || "Lovec").trim();
+    const name = `${userData.name || ""} ${userData.surname || ""}`.trim() || "Lovec";
 
     // Poišči aktivne memberships za tega uporabnika
     const membershipsSnap = await admin
