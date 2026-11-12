@@ -1,0 +1,215 @@
+{
+    "indexes":  [
+                    {
+                        "collectionGroup":  "active_hunts",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "startedAt",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "ASCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "active_hunts",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "startedAt",
+                                           "order":  "DESCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "active_hunts",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "startedAtMs",
+                                           "order":  "DESCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "active_hunts",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "status",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "startedAt",
+                                           "order":  "DESCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "hunt_logs",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "createdAt",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "ASCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "hunt_logs",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "endedAt",
+                                           "order":  "DESCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "hunt_logs",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "finishedAt",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "ASCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "hunt_logs",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "finishedAt",
+                                           "order":  "DESCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "DESCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "ld_events",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ld_events",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "ASCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "ld_events",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "ldId",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "startsAt",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "__name__",
+                                           "order":  "ASCENDING"
+                                       }
+                                   ],
+                        "density":  "SPARSE_ALL"
+                    },
+                    {
+                        "collectionGroup":  "memberships",
+                        "queryScope":  "COLLECTION",
+                        "fields":  [
+                                       {
+                                           "fieldPath":  "status",
+                                           "order":  "ASCENDING"
+                                       },
+                                       {
+                                           "fieldPath":  "expiresAt",
+                                           "order":  "ASCENDING"
+                                       }
+                                   ]
+                    }
+                ],
+    "fieldOverrides":  [
+
+                       ]
+}

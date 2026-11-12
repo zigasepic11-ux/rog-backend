@@ -15,6 +15,9 @@ const SMTP_PASSWORD = defineSecret("SMTP_PASSWORD");
 
 const INVITE_EXPIRY_HOURS = 48;
 
+// Naslov portala (kamor vodijo povezave v emailih). Edino mesto za spremembo.
+const PORTAL_URL = "https://loquacious-longma-1d4dfb.netlify.app";
+
 // Vizualna osnova usklajena z DEJANSKO identiteto portala (theme.css/App.css):
 // topla krem/bež ozadja, rjava kot glavna barva (ne zelena), brez pretirane
 // "SaaS predloge" estetike (manj senc, manj emoji, bolj umirjeno).
@@ -77,7 +80,7 @@ function buildWelcomeEmailHtml({ name, ldName }) {
     <h2 style="color:${ROG_COLORS.brown}; margin-top:0; margin-bottom:14px; font-size:19px;">Dobrodošli, ${name || ""}.</h2>
     <p>Vaš račun za lovsko družino <strong>${ldName}</strong> je uspešno aktiviran.</p>
     <p>Odslej se lahko prijavite v ROG Sistem z vašim emailom in PIN-om, ki ste ga pravkar nastavili.</p>
-    ${emailButton("https://rog-sistem.si/", "Pojdi na prijavo")}
+    ${emailButton(PORTAL_URL + "/", "Pojdi na prijavo")}
     <p style="font-size:13px; color:${ROG_COLORS.muted}; margin-bottom:0;">Če imate kakršnakoli vprašanja, se obrnite na moderatorja vaše lovske družine.</p>
   `;
   return emailWrapper(body);
@@ -314,7 +317,7 @@ async function performInvite({
     { merge: true }
   );
 
-  const inviteUrl = `https://rog-sistem.si/potrdi-vabilo?token=${inviteToken}&membership=${membershipId}`;
+  const inviteUrl = `${PORTAL_URL}/potrdi-vabilo?token=${inviteToken}&membership=${membershipId}`;
   const transporter = buildTransporter(SMTP_PASSWORD.value());
 
   try {
@@ -728,7 +731,7 @@ exports.resendInvite = onCall(
       updatedAt: now,
     });
 
-    const inviteUrl = `https://rog-sistem.si/potrdi-vabilo?token=${inviteToken}&membership=${membershipId}`;
+    const inviteUrl = `${PORTAL_URL}/potrdi-vabilo?token=${inviteToken}&membership=${membershipId}`;
     const transporter = buildTransporter(SMTP_PASSWORD.value());
 
     try {
@@ -868,7 +871,7 @@ exports.requestPinReset = onCall(
     const userDoc = await db.collection("users").doc(uid).get();
     const name = userDoc.exists ? userDoc.data().name : "";
 
-    const resetUrl = `https://rog-sistem.si/ponastavi-pin?token=${resetToken}&uid=${uid}`;
+    const resetUrl = `${PORTAL_URL}/ponastavi-pin?token=${resetToken}&uid=${uid}`;
     const transporter = buildTransporter(SMTP_PASSWORD.value());
 
     try {
@@ -1085,6 +1088,7 @@ exports.listLdMembers = onCall(async (request) => {
       email: userData.email || "",
       role: m.role,
       status: m.status,
+      isBoardMember: m.isBoardMember === true,
       invitedAt: m.invitedAt ? m.invitedAt.toMillis() : null,
       confirmedAt: m.confirmedAt ? m.confirmedAt.toMillis() : null,
     });
@@ -1220,6 +1224,64 @@ exports.changeMemberRole = onCall(async (request) => {
     ldId: membership.ldId,
     timestamp: now,
     details: { membershipId, oldRole, newRole },
+  });
+
+  return { success: true };
+});
+
+ /**
+ * setMemberBoardFlag - moderator/super nastavi ali odstrani oznako
+ * "clan upravnega odbora" na memberships dokumentu.
+ *
+ * data: { membershipId: string, isBoardMember: boolean }
+ */
+exports.setMemberBoardFlag = onCall(async (request) => {
+  const callerUid = request.auth && request.auth.uid;
+  if (!callerUid) {
+    throw new HttpsError("unauthenticated", "Prijava je obvezna.");
+  }
+
+  const { membershipId, isBoardMember } = request.data || {};
+  if (!membershipId || typeof isBoardMember !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "membershipId in isBoardMember (true/false) sta obvezna."
+    );
+  }
+
+  const db = getFirestore();
+  const membershipRef = db.collection("memberships").doc(membershipId);
+  const membershipSnap = await membershipRef.get();
+
+  if (!membershipSnap.exists) {
+    throw new HttpsError("not-found", "Članstvo ne obstaja.");
+  }
+
+  const membership = membershipSnap.data();
+
+  const allowed = await callerCanInvite(
+    callerUid,
+    request.auth.token,
+    membership.ldId,
+    db
+  );
+  if (!allowed) {
+    throw new HttpsError(
+      "permission-denied",
+      "Nimate pravic za spremembo članstva v upravnem odboru te lovske družine."
+    );
+  }
+
+  const now = Timestamp.now();
+  await membershipRef.update({ isBoardMember, updatedAt: now });
+
+  await db.collection("auditLog").add({
+    action: "board_flag_changed",
+    performedBy: callerUid,
+    targetUid: membership.uid,
+    ldId: membership.ldId,
+    timestamp: now,
+    details: { membershipId, isBoardMember },
   });
 
   return { success: true };

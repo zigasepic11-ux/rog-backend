@@ -604,6 +604,7 @@ router.get("/users", requireAuth, requireStaff, async (req, res) => {
           name: x.name || "",
           role: x.role || "member",
           enabled: x.enabled === true,
+          isBoardMember: x.isBoardMember === true,
           createdAt: toIsoMaybe(x.createdAt) || null,
           updatedAt: toIsoMaybe(x.updatedAt) || null,
         };
@@ -695,6 +696,9 @@ router.patch("/users/:code", requireAuth, requireStaff, async (req, res) => {
       patch.disabledAt = req.body.enabled
         ? null
         : admin.firestore.FieldValue.serverTimestamp();
+    }
+    if (typeof req.body?.isBoardMember === "boolean") {
+      patch.isBoardMember = req.body.isBoardMember;
     }
     if (req.body?.name != null) patch.name = String(req.body.name).trim();
 

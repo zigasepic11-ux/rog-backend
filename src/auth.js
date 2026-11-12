@@ -33,15 +33,16 @@ async function requireAuth(req, res, next) {
     // vedenje za obstoječe uporabnike.
     const hunterSnap = await db.collection("hunters").doc(code).get();
 
-    let dbRole, dbLdId, dbName, dbEnabled;
+      let dbRole, dbLdId, dbName, dbEnabled, dbIsBoardMember;
 
-    if (hunterSnap.exists) {
-      const data = hunterSnap.data() || {};
-      dbEnabled = data.enabled === true;
-      dbRole = String(data.role || "member").trim();
-      dbLdId = String(data.ldId || "").trim();
-      dbName = String(data.name || "Lovec").trim();
-    } else {
+       if (hunterSnap.exists) {
+        const data = hunterSnap.data() || {};
+        dbEnabled = data.enabled === true;
+        dbRole = String(data.role || "member").trim();
+        dbLdId = String(data.ldId || "").trim();
+        dbName = String(data.name || "Lovec").trim();
+        dbIsBoardMember = data.isBoardMember === true;
+      } else {
       // 2. NI najden v starem sistemu - poskusi NOV sistem
       // (memberships + users kolekcija). ldId je že vsebovan v JWT-u
       // (nastavljen ob /auth/login-firebase), ker en uporabnik lahko
@@ -61,14 +62,14 @@ async function requireAuth(req, res, next) {
       }
 
       const membership = membershipSnap.data() || {};
-      dbEnabled = membership.status === "active";
-      dbRole = String(membership.role || "member").trim();
-      dbLdId = String(membership.ldId || "").trim();
+        dbEnabled = membership.status === "active";
+        dbRole = String(membership.role || "member").trim();
+        dbLdId = String(membership.ldId || "").trim();
+        dbIsBoardMember = membership.isBoardMember === true;
 
       const userSnap = await db.collection("users").doc(code).get();
-      dbName = userSnap.exists
-        ? String(userSnap.data().name || "Lovec").trim()
-        : "Lovec";
+      const ud = userSnap.exists ? userSnap.data() || {} : {};
+      dbName = `${ud.name || ""} ${ud.surname || ""}`.trim() || "Lovec";
     }
 
     if (!dbEnabled) {
@@ -93,6 +94,7 @@ async function requireAuth(req, res, next) {
       name: dbName,
       role: dbRole,
       ldId: effectiveLdId,
+      isBoardMember: dbIsBoardMember === true,
       tokenIat: decoded?.iat || null,
       tokenExp: decoded?.exp || null,
     };

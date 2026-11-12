@@ -4,3 +4,9 @@ node_modules
 serviceAccountKey.json
 *.log
 .DS_Store
+
+emulator-data/
+*.bak
+auth_diff.txt
+authroutes_diff.txt
+firebase_original_backup.js

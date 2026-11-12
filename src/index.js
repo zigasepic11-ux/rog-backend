@@ -87,6 +87,7 @@ const ldLoad = loadRoute("./routes/ld.routes");
 const workHoursLoad = loadRoute("./routes/workhours.routes");
 const documentsLoad = loadRoute("./routes/documents.routes");
 const notificationsLoad = loadRoute("./routes/notifications.routes");
+const boardLoad = loadRoute("./routes/board.routes");
 
 if (authLoad.ok) app.use("/auth", authLoad.router);
 else console.error("❌ FAILED loading ./routes/auth.routes\n", authLoad.error);
@@ -102,6 +103,9 @@ else console.error("❌ FAILED loading ./routes/documents.routes\n", documentsLo
 
 if (notificationsLoad.ok) app.use("/notifications", notificationsLoad.router);
 else console.error("❌ FAILED loading ./routes/notifications.routes\n", notificationsLoad.error);
+
+if (boardLoad.ok) app.use("/", boardLoad.router);
+else console.error("❌ FAILED loading ./routes/board.routes\n", boardLoad.error);
 
 app.get("/debug/routes", (req, res) => {
   res.json({

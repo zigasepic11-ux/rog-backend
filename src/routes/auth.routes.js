@@ -119,6 +119,7 @@ router.get("/me", requireAuth, (req, res) => {
       role: req.user.role,
       ldId: req.user.ldId,
       name: req.user.name,
+      isBoardMember: req.user.isBoardMember === true,
     },
   });
 });
