@@ -516,6 +516,31 @@ async function loadOdvzemViewRows(ldId, year) {
   return { plan, rows };
 }
 
+// Poisce clana: najprej v "hunters" (star sistem), nato v aktivnih
+// "memberships" (nov, email sistem). Vrne { name, ldId, source } ali null.
+async function loadMemberProfile(memberId, ldId) {
+  const db = admin.firestore();
+  const hs = await db.collection("hunters").doc(memberId).get();
+  if (hs.exists) {
+    const h = hs.data() || {};
+    return { name: safeStr(h.name), ldId: safeStr(h.ldId), source: "legacy" };
+  }
+  const ms = await db.collection("memberships").doc(`${memberId}_${ldId}`).get();
+  if (ms.exists) {
+    const m = ms.data() || {};
+    if (m.status !== "active") return null;
+    const us = await db.collection("users").doc(memberId).get();
+    const u = us.exists ? us.data() || {} : {};
+    const full = `${u.name || ""} ${u.surname || ""}`.trim();
+    return {
+      name: full || safeStr(u.email) || memberId,
+      ldId: safeStr(m.ldId),
+      source: "email",
+    };
+  }
+  return null;
+}
+
 /* ================= DASHBOARD ================= */
 
 router.get("/dashboard", requireAuth, async (req, res) => {
@@ -611,6 +636,64 @@ router.get("/users", requireAuth, requireStaff, async (req, res) => {
       })
       .sort((a, b) => String(a.name).localeCompare(String(b.name), "sl"));
 
+    return res.json({ ok: true, users });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(e?.stack || e?.message || e),
+    });
+  }
+});
+
+/* ================= MEMBERS (hunters + memberships) ================= */
+// Zdruzen seznam clanov za izbirnike (zadolzitve, delovne ure): stari clani
+// iz "hunters" in novi (email) iz "memberships". Oblika odgovora je enaka
+// kot pri GET /users.
+router.get("/members", requireAuth, requireStaff, async (req, res) => {
+  try {
+    const ldId = String(req.user?.ldId || "").trim();
+    if (!ldId) return res.status(400).json({ error: "Missing ldId in token." });
+
+    const db = admin.firestore();
+
+    const hsnap = await db.collection("hunters").where("ldId", "==", ldId).get();
+    const users = hsnap.docs.map((d) => {
+      const x = d.data() || {};
+      return {
+        code: d.id,
+        name: x.name || "",
+        role: x.role || "member",
+        enabled: x.enabled === true,
+        isBoardMember: x.isBoardMember === true,
+        source: "legacy",
+      };
+    });
+
+    try {
+      const msnap = await db.collection("memberships").where("ldId", "==", ldId).get();
+      for (const md of msnap.docs) {
+        const m = md.data() || {};
+        const status = String(m.status || "");
+        if (status !== "active" && status !== "deactivated") continue;
+        const uid = String(m.uid || "").trim();
+        if (!uid) continue;
+        const us = await db.collection("users").doc(uid).get();
+        const u = us.exists ? us.data() || {} : {};
+        const full = `${u.name || ""} ${u.surname || ""}`.trim();
+        users.push({
+          code: uid,
+          name: full || u.email || uid,
+          role: m.role || "member",
+          enabled: status === "active",
+          isBoardMember: m.isBoardMember === true,
+          source: "email",
+        });
+      }
+    } catch (e) {
+      console.error("members: memberships query failed (non-fatal):", e?.message || e);
+    }
+
+    users.sort((a, b) => String(a.name).localeCompare(String(b.name), "sl"));
     return res.json({ ok: true, users });
   } catch (e) {
     return res.status(500).json({
@@ -2787,14 +2870,10 @@ router.post("/hunter-assignments", requireAuth, requireStaff, async (req, res) =
     if (!hunterId) return res.status(400).json({ error: "Missing hunterId" });
     if (!title) return res.status(400).json({ error: "Missing title" });
 
-    const hunterRef = admin.firestore().collection("hunters").doc(hunterId);
-    const hunterSnap = await hunterRef.get();
-
-    if (!hunterSnap.exists) {
+    const hunter = await loadMemberProfile(hunterId, ldId);
+    if (!hunter) {
       return res.status(404).json({ error: "Hunter not found" });
     }
-
-    const hunter = hunterSnap.data() || {};
     if (!isSuper(req) && String(hunter.ldId || "") !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
