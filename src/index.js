@@ -40,6 +40,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
+// /debug poti so izklopljene (vracajo podatke o strezniku in bazi).
+app.use("/debug", (req, res) => res.status(404).json({ error: "Not found" }));
+
 app.get("/debug/cors", (req, res) => {
   res.json({
     ok: true,
