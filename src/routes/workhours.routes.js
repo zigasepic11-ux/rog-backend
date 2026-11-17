@@ -45,6 +45,36 @@ function planDocId(ldId, year) {
   return `${ldId}_${year}`;
 }
 
+// Poisce clana: najprej v "hunters" (star sistem), nato v aktivnih
+// "memberships" (nov, email sistem). Vrne { name, role, ldId, source } ali null.
+async function loadMemberProfile(db, memberId, ldId) {
+  const hs = await db.collection("hunters").doc(memberId).get();
+  if (hs.exists) {
+    const h = hs.data() || {};
+    return {
+      name: safeStr(h.name),
+      role: safeStr(h.role || "member"),
+      ldId: safeStr(h.ldId),
+      source: "legacy",
+    };
+  }
+  const ms = await db.collection("memberships").doc(`${memberId}_${ldId}`).get();
+  if (ms.exists) {
+    const m = ms.data() || {};
+    if (m.status !== "active") return null;
+    const us = await db.collection("users").doc(memberId).get();
+    const u = us.exists ? us.data() || {} : {};
+    const full = `${u.name || ""} ${u.surname || ""}`.trim();
+    return {
+      name: full || safeStr(u.email) || memberId,
+      role: safeStr(m.role || "member"),
+      ldId: safeStr(m.ldId),
+      source: "email",
+    };
+  }
+  return null;
+}
+
 /* ================= OVERVIEW =================
    GET /ld/work-hours/overview?year=2026
 */
@@ -77,6 +107,32 @@ router.get("/work-hours/overview", requireAuth, async (req, res) => {
         enabled: x.enabled === true,
       };
     });
+
+    // Novi (email) clani: clanstvo je v "memberships", ime v "users".
+    // Napaka tu ne sme podreti pregleda starih clanov.
+    try {
+      const msnap = await db.collection("memberships").where("ldId", "==", ldId).get();
+      for (const md of msnap.docs) {
+        const m = md.data() || {};
+        const status = safeStr(m.status);
+        if (status !== "active" && status !== "deactivated") continue;
+        const uid = safeStr(m.uid);
+        if (!uid) continue;
+        const us = await db.collection("users").doc(uid).get();
+        const u = us.exists ? us.data() || {} : {};
+        const full = `${u.name || ""} ${u.surname || ""}`.trim();
+        hunters.push({
+          hunterId: uid,
+          hunterCode: uid,
+          name: full || safeStr(u.email) || uid,
+          role: safeStr(m.role || "member"),
+          enabled: status === "active",
+          source: "email",
+        });
+      }
+    } catch (e) {
+      console.error("work-hours overview: memberships query failed (non-fatal):", e?.message || e);
+    }
 
     const plansSnap = await db
       .collection("work_hour_plans")
@@ -172,14 +228,10 @@ router.get("/work-hours/me", requireAuth, async (req, res) => {
 
     const db = admin.firestore();
 
-    const hunterRef = db.collection("hunters").doc(hunterId);
-    const hunterSnap = await hunterRef.get();
-
-    if (!hunterSnap.exists) {
+    const hunter = await loadMemberProfile(db, hunterId, ldId);
+    if (!hunter) {
       return res.status(404).json({ error: "Hunter not found" });
     }
-
-    const hunter = hunterSnap.data() || {};
 
     if (!isSuper(req) && safeStr(hunter.ldId) !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
@@ -265,14 +317,10 @@ router.post("/work-hours/plan", requireAuth, requireStaff, async (req, res) => {
 
     const db = admin.firestore();
 
-    const hunterRef = db.collection("hunters").doc(hunterId);
-    const hunterSnap = await hunterRef.get();
-
-    if (!hunterSnap.exists) {
+    const hunter = await loadMemberProfile(db, hunterId, ldId);
+    if (!hunter) {
       return res.status(404).json({ error: "Hunter not found" });
     }
-
-    const hunter = hunterSnap.data() || {};
     if (!isSuper(req) && safeStr(hunter.ldId) !== ldId) {
       return res.status(403).json({ error: "Forbidden (other LD)" });
     }
@@ -588,14 +636,10 @@ router.post("/work-actions/:id/entries", requireAuth, requireStaff, async (req, 
       return res.status(400).json({ error: "Akcija je zaključena in vnosi niso več možni." });
     }
 
-    const hunterRef = db.collection("hunters").doc(hunterId);
-    const hunterSnap = await hunterRef.get();
-
-    if (!hunterSnap.exists) {
+    const hunter = await loadMemberProfile(db, hunterId, ldId);
+    if (!hunter) {
       return res.status(404).json({ error: "Hunter not found" });
     }
-
-    const hunter = hunterSnap.data() || {};
     if (!isSuper(req) && safeStr(hunter.ldId) !== ldId) {
       return res.status(403).json({ error: "Forbidden (hunter from other LD)" });
     }
